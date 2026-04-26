@@ -97,14 +97,22 @@ async def _run_news_scan() -> None:
         for item in suggestions:
             from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
             text = (
-                f"<b>📰 Горячая новость ({item['source']})</b>\n\n"
-                f"{item['title']}\n\n"
-                f"Создать рынок прогнозов по этой теме?\n"
-                f"Используй /addevent чтобы добавить событие."
+                f"<b>📰 Горячая новость</b>\n"
+                f"<i>{item['source']}</i>\n\n"
+                f"<b>{item['title']}</b>\n\n"
+                f"Хочешь создать рынок прогнозов по этой теме?"
             )
+            kb = InlineKeyboardMarkup(inline_keyboard=[[
+                InlineKeyboardButton(
+                    text="➕ Создать событие",
+                    callback_data="news:addevent",
+                ),
+            ]])
             for admin_id in settings.admin_id_list:
                 try:
-                    await bot.send_message(admin_id, text, parse_mode="HTML")
+                    await bot.send_message(
+                        admin_id, text, parse_mode="HTML", reply_markup=kb
+                    )
                 except Exception:
                     pass
 

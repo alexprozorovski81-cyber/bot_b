@@ -242,6 +242,70 @@ async def addevent_abort(callback: CallbackQuery, state: FSMContext) -> None:
     await callback.answer()
 
 
+# ── Кнопка "Создать событие" из новостного уведомления ──────────────────────
+
+@router.callback_query(F.data == "news:addevent")
+async def news_addevent_btn(callback: CallbackQuery, state: FSMContext) -> None:
+    """Нажатие «➕ Создать событие» под новостным уведомлением."""
+    if not is_admin(callback.from_user.id):
+        await callback.answer("Только для администратора", show_alert=True)
+        return
+
+    await callback.message.edit_reply_markup(reply_markup=None)
+    await state.set_state(AddEventStates.title)
+    await callback.message.answer(
+        "<b>➕ Создание события по новости</b>\n\n"
+        "Шаг 1/5: Отредактируй или подтверди <b>название события</b> "
+        "(можешь скопировать заголовок выше и переформулировать в вопрос).\n\n"
+        "<i>Пример: Выиграет ли Зенит РПЛ в сезоне 2025/26?</i>\n\n"
+        "Напиши /cancel чтобы отменить.",
+        parse_mode="HTML",
+    )
+    await callback.answer()
+
+
+# ── Ручная проверка парсера ──────────────────────────────────────────────────
+
+@router.message(Command("newscheck"))
+async def cmd_newscheck(message: Message) -> None:
+    """
+    /newscheck — ручной запуск парсера новостей (игнорирует кэш).
+    Показывает что нашлось прямо в чате без рассылки уведомлений.
+    """
+    if not is_admin(message.from_user.id):
+        return
+
+    await message.answer("🔍 Проверяю RSS-ленты...")
+
+    from bot.services.news_service import fetch_news_suggestions
+    try:
+        items = await fetch_news_suggestions(ignore_cache=True)
+    except Exception as e:
+        await message.answer(f"❌ Ошибка парсера: {e}")
+        return
+
+    if not items:
+        await message.answer(
+            "📭 Подходящих новостей не найдено.\n\n"
+            "<i>Возможные причины:\n"
+            "• RSS-ленты временно недоступны\n"
+            "• Ни один заголовок не совпал с ключевыми словами\n"
+            "Проверь логи Amvera (ищи строки RSS OK / RSS error)</i>",
+            parse_mode="HTML",
+        )
+        return
+
+    await message.answer(
+        f"✅ Найдено {len(items)} новостей:\n\n" +
+        "\n\n".join(
+            f"<b>{i+1}. {it['title']}</b>\n"
+            f"<i>{it['source']} · {it['category']}</i>"
+            for i, it in enumerate(items)
+        ),
+        parse_mode="HTML",
+    )
+
+
 # ── Остальные команды ────────────────────────────────────────────────────────
 
 @router.message(Command("admin"))
@@ -253,6 +317,8 @@ async def admin_menu(message: Message) -> None:
         "<b>⚙️ Админ-панель</b>\n\n"
         "Доступные команды:\n"
         "• /events — список активных событий\n"
+        "• /addevent — создать новое событие\n"
+        "• /newscheck — проверить RSS прямо сейчас\n"
         "• /resolve &lt;event_id&gt; — разрешить событие\n"
         "• /cancel_event &lt;event_id&gt; — отменить с возвратом\n"
         "• /stats — статистика платформы\n"
