@@ -139,13 +139,25 @@ async def init_database() -> None:
                 logger.warning(f"Seed error: {e}")
 
 
+async def _safe_run(coro_fn, name: str) -> None:
+    try:
+        await coro_fn()
+    except Exception as e:
+        logger.exception(f"Task '{name}' crashed: {e}")
+        raise
+
+
 async def main() -> None:
     await init_database()
-    await asyncio.gather(
-        run_bot(),
-        run_api(),
-        run_cron(),
+    results = await asyncio.gather(
+        _safe_run(run_bot, "run_bot"),
+        _safe_run(run_api, "run_api"),
+        _safe_run(run_cron, "run_cron"),
+        return_exceptions=True,
     )
+    for r in results:
+        if isinstance(r, Exception):
+            logger.error(f"A task exited with exception: {r}")
 
 
 if __name__ == "__main__":

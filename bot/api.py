@@ -8,6 +8,7 @@ import hmac
 import json
 import logging
 from decimal import Decimal
+from pathlib import Path
 from typing import Annotated
 from urllib.parse import parse_qsl
 
@@ -468,7 +469,8 @@ async def ton_deposit_status(
 
 
 # Раздаём Mini App статикой
-app.mount("/miniapp", StaticFiles(directory="miniapp", html=True), name="miniapp")
+_MINIAPP_DIR = Path(__file__).parent.parent / "miniapp"
+app.mount("/miniapp", StaticFiles(directory=str(_MINIAPP_DIR), html=True), name="miniapp")
 
 
 @app.get("/")
