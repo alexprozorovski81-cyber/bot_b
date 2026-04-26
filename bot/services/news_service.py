@@ -23,23 +23,23 @@ logger = logging.getLogger(__name__)
 
 RSS_SOURCES = [
     {
-        "name": "Яндекс.Новости — Политика",
-        "url": "https://news.yandex.ru/politics.rss",
+        "name": "ТАСС — Главные новости",
+        "url": "https://tass.ru/rss/v2.xml",
         "category": "politics",
     },
     {
-        "name": "Яндекс.Новости — Экономика",
-        "url": "https://news.yandex.ru/business.rss",
+        "name": "Lenta.ru — Новости",
+        "url": "https://lenta.ru/rss/news",
         "category": "economy",
     },
     {
-        "name": "Sports.ru — Футбол Россия",
-        "url": "https://www.sports.ru/rss/football/russia/",
-        "category": "sports",
+        "name": "РБК — Топ новости",
+        "url": "https://rss.rbc.ru/rbc_top.rss",
+        "category": "economy",
     },
     {
-        "name": "Sports.ru — КХЛ",
-        "url": "https://www.sports.ru/rss/hockey/khl/",
+        "name": "Чемпионат — Спорт",
+        "url": "https://www.championat.com/rss/news_all.rss",
         "category": "sports",
     },
 ]

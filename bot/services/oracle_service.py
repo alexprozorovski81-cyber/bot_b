@@ -27,14 +27,21 @@ logger = logging.getLogger(__name__)
 # Маппинг slug события → правило для оракула
 # Это упрощённая версия — в проде это хранится в БД с extensible-схемой
 ORACLE_RULES: dict[str, dict] = {
-    "btc-100k-2026": {
+    "btc-150k-2026": {
         "type": "coingecko_threshold",
         "coin": "bitcoin",
         "threshold_usd": 150000,
         "yes_outcome_slug": "Да",
         "no_outcome_slug": "Нет",
     },
-    "eth-flippening": {
+    "ton-price-10-2026": {
+        "type": "coingecko_threshold",
+        "coin": "the-open-network",
+        "threshold_usd": 10,
+        "yes_outcome_slug": "Да, $10+",
+        "no_outcome_slug": "Нет",
+    },
+    "eth-flippening-2026": {
         "type": "coingecko_flippening",
         "yes_outcome_slug": "Да",
         "no_outcome_slug": "Нет",
