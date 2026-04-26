@@ -33,7 +33,12 @@
       "Bash(curl -s --connect-timeout 5 http://example.com)",
       "Bash(ssh -o StrictHostKeyChecking=no -o ServerAliveInterval=30 -R 80:localhost:8000 nokey@localhost.run -p 22)",
       "Bash(ssh -o StrictHostKeyChecking=no -R 80:localhost:8000 serveo.net)",
-      "Bash(ping api.telegram.org -n 2)"
+      "Bash(ping api.telegram.org -n 2)",
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)",
+      "Bash(git push *)",
+      "WebFetch(domain:zeabur.com)",
+      "WebSearch"
     ]
   }
 }

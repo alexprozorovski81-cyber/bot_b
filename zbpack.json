@@ -1,0 +1,6 @@
+{
+  "python": {
+    "version": "3.11"
+  },
+  "start_command": "python -m bot.main"
+}

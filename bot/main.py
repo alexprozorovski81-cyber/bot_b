@@ -8,6 +8,7 @@
 """
 import asyncio
 import logging
+import os
 
 import uvicorn
 from aiogram import Bot, Dispatcher
@@ -49,10 +50,12 @@ async def run_bot() -> None:
 
 async def run_api() -> None:
     """Запуск FastAPI для Mini App."""
+    # Zeabur (и другие PaaS) передают порт через $PORT
+    port = int(os.environ.get("PORT", settings.api_port))
     config = uvicorn.Config(
         "bot.api:app",
-        host=settings.api_host,
-        port=settings.api_port,
+        host="0.0.0.0",
+        port=port,
         log_level="info",
     )
     server = uvicorn.Server(config)
