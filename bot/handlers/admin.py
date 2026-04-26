@@ -206,6 +206,7 @@ async def addevent_confirm(callback: CallbackQuery, state: FSMContext) -> None:
             slug=slug,
             title=data["title"],
             description=data["title"],
+            image_url=data.get("prefill_image_url"),   # фото из новости
             category_id=data["category_id"],
             status=EventStatus.ACTIVE,
             liquidity_b=Decimal("1000.00"),
@@ -244,19 +245,43 @@ async def addevent_abort(callback: CallbackQuery, state: FSMContext) -> None:
 
 # ── Кнопка "Создать событие" из новостного уведомления ──────────────────────
 
-@router.callback_query(F.data == "news:addevent")
+@router.callback_query(F.data.startswith("news:addevent"))
 async def news_addevent_btn(callback: CallbackQuery, state: FSMContext) -> None:
     """Нажатие «➕ Создать событие» под новостным уведомлением."""
     if not is_admin(callback.from_user.id):
         await callback.answer("Только для администратора", show_alert=True)
         return
 
+    # Извлекаем хэш новости из callback_data (news:addevent:{hash})
+    parts = callback.data.split(":")
+    news_hash = parts[2] if len(parts) > 2 else None
+
+    # Получаем сохранённые данные новости (заголовок + изображение)
+    news_item = None
+    if news_hash:
+        from bot.services.news_service import get_item_by_hash
+        news_item = get_item_by_hash(news_hash)
+
     await callback.message.edit_reply_markup(reply_markup=None)
+
+    hint = ""
+    if news_item:
+        hint = (
+            f"\n\n💡 <i>Изображение из статьи сохранено "
+            f"{'✅' if news_item.get('image_url') else '❌ (не найдено)'}</i>"
+        )
+        # Сохраняем image_url в FSM-state чтобы использовать при создании
+        await state.update_data(
+            prefill_image_url=news_item.get("image_url"),
+            prefill_title=news_item.get("title", ""),
+        )
+
     await state.set_state(AddEventStates.title)
     await callback.message.answer(
         "<b>➕ Создание события по новости</b>\n\n"
-        "Шаг 1/5: Отредактируй или подтверди <b>название события</b> "
-        "(можешь скопировать заголовок выше и переформулировать в вопрос).\n\n"
+        "Шаг 1/5: Введи <b>название события</b> в форме вопроса.\n"
+        "<i>(Переформулируй заголовок новости в вопрос)</i>"
+        f"{hint}\n\n"
         "<i>Пример: Выиграет ли Зенит РПЛ в сезоне 2025/26?</i>\n\n"
         "Напиши /cancel чтобы отменить.",
         parse_mode="HTML",
@@ -295,15 +320,40 @@ async def cmd_newscheck(message: Message) -> None:
         )
         return
 
-    await message.answer(
-        f"✅ Найдено {len(items)} новостей:\n\n" +
-        "\n\n".join(
-            f"<b>{i+1}. {it['title']}</b>\n"
-            f"<i>{it['source']} · {it['category']}</i>"
-            for i, it in enumerate(items)
-        ),
-        parse_mode="HTML",
-    )
+    await message.answer(f"✅ Найдено {len(items)} новостей. Отправляю...")
+
+    from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+    for it in items:
+        caption = (
+            f"<b>{it['source']}</b>\n\n"
+            f"<b>{it['title']}</b>\n"
+            f"<i>Категория: {it['category']}</i>"
+            + (f"\n🔗 <a href='{it['article_url']}'>Источник</a>" if it.get("article_url") else "")
+            + (f"\n🖼 Фото: ✅" if it.get("image_url") else "\n🖼 Фото: ❌ не найдено")
+        )
+        kb = InlineKeyboardMarkup(inline_keyboard=[[
+            InlineKeyboardButton(
+                text="➕ Создать событие",
+                callback_data=f"news:addevent:{it['hash']}",
+            ),
+        ]])
+        try:
+            if it.get("image_url"):
+                await message.answer_photo(
+                    photo=it["image_url"],
+                    caption=caption,
+                    parse_mode="HTML",
+                    reply_markup=kb,
+                )
+            else:
+                await message.answer(caption, parse_mode="HTML", reply_markup=kb)
+        except Exception as e:
+            # Фото не загрузилось — отправляем без него
+            await message.answer(
+                caption + f"\n\n⚠️ <i>Не удалось загрузить фото: {e}</i>",
+                parse_mode="HTML",
+                reply_markup=kb,
+            )
 
 
 # ── Остальные команды ────────────────────────────────────────────────────────

@@ -95,26 +95,39 @@ async def _run_news_scan() -> None:
 
         suggestions = await fetch_news_suggestions()
         for item in suggestions:
-            from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
-            text = (
-                f"<b>📰 Горячая новость</b>\n"
-                f"<i>{item['source']}</i>\n\n"
+            from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, URLInputFile
+            caption = (
+                f"<b>📰 {item['source']}</b>\n\n"
                 f"<b>{item['title']}</b>\n\n"
                 f"Хочешь создать рынок прогнозов по этой теме?"
             )
             kb = InlineKeyboardMarkup(inline_keyboard=[[
                 InlineKeyboardButton(
                     text="➕ Создать событие",
-                    callback_data="news:addevent",
+                    callback_data=f"news:addevent:{item['hash']}",
                 ),
             ]])
             for admin_id in settings.admin_id_list:
                 try:
-                    await bot.send_message(
-                        admin_id, text, parse_mode="HTML", reply_markup=kb
-                    )
-                except Exception:
-                    pass
+                    if item.get("image_url"):
+                        # Отправляем фото со статьи с подписью
+                        await bot.send_photo(
+                            admin_id,
+                            photo=item["image_url"],
+                            caption=caption,
+                            parse_mode="HTML",
+                            reply_markup=kb,
+                        )
+                    else:
+                        # Фото не нашлось — отправляем текст
+                        await bot.send_message(
+                            admin_id,
+                            caption,
+                            parse_mode="HTML",
+                            reply_markup=kb,
+                        )
+                except Exception as e:
+                    logger.warning(f"News notify error for {admin_id}: {e}")
 
         # Курс ЦБ РФ — отправляем если значительное изменение
         rate = await fetch_cbr_rate()

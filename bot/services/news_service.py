@@ -1,27 +1,27 @@
 """
 Парсер новостей — находит горячие события и уведомляет администратора.
 
-Источники:
-- Яндекс.Новости (RSS)
-- Sports.ru (RSS)
-- ЦБ РФ (XML API) — курс доллара
+Источники RSS:
+- ТАСС, Lenta.ru, РБК, Чемпионат
+
+Извлечение фото (по приоритету):
+  1. <enclosure> в RSS-item
+  2. <media:content> / <media:thumbnail> в RSS-item
+  3. <img> в <description> RSS-item
+  4. og:image со страницы статьи (отдельный HTTP-запрос)
 
 Запускается каждые 30 минут из main.py (cron).
-Администратор получает в Telegram:
-  "📰 Найдено событие: <заголовок>
-   Создать рынок? [Да] [Нет]"
 """
 import hashlib
 import logging
+import re
 from xml.etree import ElementTree
 
 import httpx
 
-from bot.config import settings
-
 logger = logging.getLogger(__name__)
 
-# Браузерный User-Agent — без него ТАСС/РБК/Лента возвращают 403
+# Браузерный User-Agent — без него ТАСС/РБК/Лента могут вернуть 403
 _HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -30,6 +30,12 @@ _HEADERS = {
     ),
     "Accept": "application/rss+xml, application/xml, text/xml, */*",
 }
+
+# Пространства имён для media:content / media:thumbnail
+_MEDIA_NS = [
+    "http://search.yahoo.com/mrss/",
+    "http://video.search.yahoo.com/mrss/",
+]
 
 RSS_SOURCES = [
     {
@@ -54,7 +60,7 @@ RSS_SOURCES = [
     },
 ]
 
-# Ключевые слова — фильтруем только значимые новости
+# Ключевые слова — фильтруем значимые новости
 KEYWORDS = [
     # политика
     "путин", "госдума", "правительство", "санкции", "переговоры",
@@ -71,8 +77,12 @@ KEYWORDS = [
     "биткоин", "bitcoin", "крипт", "яндекс", "сбер", "искусственный",
 ]
 
-# Уже отправленные новости (в памяти — сбрасывается при рестарте)
+# Хэши уже отправленных новостей (сбрасывается при рестарте)
 _sent_hashes: set[str] = set()
+
+# Кэш последних новостей для lookup по хэшу (для кнопки «Создать событие»)
+_recent_items: dict[str, dict] = {}
+_MAX_RECENT = 50
 
 
 def _news_hash(title: str) -> str:
@@ -84,16 +94,86 @@ def _is_interesting(title: str) -> bool:
     return any(kw in t for kw in KEYWORDS)
 
 
+def get_item_by_hash(h: str) -> dict | None:
+    """Возвращает новость из кэша по хэшу (для кнопки создания события)."""
+    return _recent_items.get(h)
+
+
+def _extract_image_from_rss_item(item: ElementTree.Element) -> str | None:
+    """Извлекает URL изображения из RSS-элемента (без HTTP-запросов)."""
+
+    # 1. <enclosure url="..." type="image/..."/>
+    enclosure = item.find("enclosure")
+    if enclosure is not None:
+        url = enclosure.get("url", "")
+        mime = enclosure.get("type", "")
+        if url and ("image" in mime or url.lower().endswith((".jpg", ".jpeg", ".png", ".webp"))):
+            return url
+
+    # 2. <media:content> / <media:thumbnail> с пространством имён
+    for ns in _MEDIA_NS:
+        for tag in ("content", "thumbnail"):
+            el = item.find(f"{{{ns}}}{tag}")
+            if el is not None:
+                url = el.get("url", "")
+                if url:
+                    return url
+
+    # 3. <img> внутри <description> (некоторые RSS встраивают HTML)
+    desc_el = item.find("description")
+    if desc_el is not None and desc_el.text:
+        m = re.search(r'<img[^>]+src=["\']([^"\']+)["\']', desc_el.text)
+        if m:
+            return m.group(1)
+
+    return None
+
+
+async def _fetch_og_image(url: str, client: httpx.AsyncClient) -> str | None:
+    """Загружает страницу статьи и извлекает og:image."""
+    try:
+        resp = await client.get(url, timeout=8)
+        resp.raise_for_status()
+        html = resp.text[:30_000]  # читаем только head
+
+        # og:image content="..." property="og:image"  — оба порядка атрибутов
+        for pattern in (
+            r'<meta[^>]+property=["\']og:image["\'][^>]+content=["\']([^"\']+)["\']',
+            r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+property=["\']og:image["\']',
+        ):
+            m = re.search(pattern, html, re.IGNORECASE)
+            if m:
+                img = m.group(1).strip()
+                if img.startswith("http"):
+                    return img
+    except Exception as e:
+        logger.debug(f"og:image fetch error for {url}: {e}")
+    return None
+
+
 async def fetch_news_suggestions(ignore_cache: bool = False) -> list[dict]:
     """
-    Парсит RSS-ленты и возвращает список новых интересных новостей.
-    Каждый элемент: {"title": ..., "category": ..., "source": ...}
+    Парсит RSS-ленты, извлекает фото и возвращает список новых интересных новостей.
 
-    ignore_cache=True — повторно отправляет уже виденные заголовки (для /newscheck).
+    Каждый элемент:
+      {
+        "title": str,
+        "category": str,
+        "source": str,
+        "hash": str,
+        "image_url": str | None,   # лучшее фото для события
+        "article_url": str | None, # ссылка на статью
+      }
+
+    ignore_cache=True — повторно включает уже виденные заголовки (для /newscheck).
     """
-    suggestions = []
+    suggestions: list[dict] = []
 
-    async with httpx.AsyncClient(timeout=15, headers=_HEADERS, follow_redirects=True) as client:
+    async with httpx.AsyncClient(
+        timeout=15,
+        headers=_HEADERS,
+        follow_redirects=True,
+    ) as client:
         for source in RSS_SOURCES:
             try:
                 resp = await client.get(source["url"])
@@ -102,6 +182,7 @@ async def fetch_news_suggestions(ignore_cache: bool = False) -> list[dict]:
 
                 items_found = 0
                 items_matched = 0
+
                 for item in root.iter("item"):
                     title_el = item.find("title")
                     if title_el is None or not title_el.text:
@@ -117,14 +198,34 @@ async def fetch_news_suggestions(ignore_cache: bool = False) -> list[dict]:
                     if h in _sent_hashes and not ignore_cache:
                         continue
 
+                    # URL статьи
+                    link_el = item.find("link")
+                    article_url = link_el.text.strip() if (link_el is not None and link_el.text) else None
+
+                    # Изображение: сначала из RSS, потом og:image
+                    image_url = _extract_image_from_rss_item(item)
+                    if not image_url and article_url:
+                        image_url = await _fetch_og_image(article_url, client)
+
                     if not ignore_cache:
                         _sent_hashes.add(h)
-                    suggestions.append({
+
+                    entry = {
                         "title": title,
                         "category": source["category"],
                         "source": source["name"],
                         "hash": h,
-                    })
+                        "image_url": image_url,
+                        "article_url": article_url,
+                    }
+                    suggestions.append(entry)
+
+                    # Сохраняем в кэш для lookup по хэшу
+                    _recent_items[h] = entry
+                    if len(_recent_items) > _MAX_RECENT:
+                        # Удаляем самый старый ключ
+                        oldest = next(iter(_recent_items))
+                        del _recent_items[oldest]
 
                 logger.info(
                     f"RSS OK [{source['name']}]: "
@@ -141,7 +242,7 @@ async def fetch_cbr_rate() -> float | None:
     """Возвращает текущий официальный курс USD/RUB с cbr.ru."""
     url = "https://www.cbr.ru/scripts/XML_daily.asp"
     try:
-        async with httpx.AsyncClient(timeout=10) as client:
+        async with httpx.AsyncClient(timeout=10, headers=_HEADERS) as client:
             resp = await client.get(url)
             resp.raise_for_status()
             root = ElementTree.fromstring(resp.content)
