@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <title>PredictBet — Рынок предсказаний</title>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <script src="https://unpkg.com/@tonconnect/ui@2.0.6/dist/tonconnect-ui.min.js"></script>
+    <script src="https://unpkg.com/tonweb@0.0.62/dist/tonweb.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="app">
+        <!-- Header с балансом -->
+        <header class="header">
+            <div class="header-top">
+                <div class="logo">
+                    <span class="logo-mark">◈</span>
+                    <span class="logo-text">PredictBet</span>
+                </div>
+                <button class="balance-pill" id="balance-pill">
+                    <span class="balance-label">Баланс</span>
+                    <span class="balance-amount" id="balance">— ₽</span>
+                </button>
+            </div>
+            <div class="header-search">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <circle cx="11" cy="11" r="8"></circle>
+                    <path d="m21 21-4.3-4.3"></path>
+                </svg>
+                <input type="text" placeholder="Найти событие..." id="search-input">
+            </div>
+        </header>
+
+        <!-- Категории -->
+        <nav class="categories" id="categories">
+            <button class="cat-pill active" data-category="">
+                <span>🌍</span> Все
+            </button>
+        </nav>
+
+        <!-- Лента событий -->
+        <main class="events-feed" id="events-feed">
+            <div class="loading">
+                <div class="spinner"></div>
+                <p>Загружаем события...</p>
+            </div>
+        </main>
+
+        <!-- Bottom navigation -->
+        <nav class="bottom-nav">
+            <button class="nav-btn active" data-tab="markets">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M3 3v18h18"></path>
+                    <path d="m19 9-5 5-4-4-3 3"></path>
+                </svg>
+                <span>Рынки</span>
+            </button>
+            <button class="nav-btn" data-tab="portfolio">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <rect width="20" height="14" x="2" y="7" rx="2"></rect>
+                    <path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"></path>
+                </svg>
+                <span>Портфель</span>
+            </button>
+            <button class="nav-btn" data-tab="profile">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <circle cx="12" cy="8" r="4"></circle>
+                    <path d="M20 21a8 8 0 0 0-16 0"></path>
+                </svg>
+                <span>Профиль</span>
+            </button>
+        </nav>
+    </div>
+
+    <!-- Шаблон карточки события -->
+    <template id="event-card-template">
+        <article class="event-card">
+            <div class="event-header">
+                <div class="event-image"></div>
+                <div class="event-info">
+                    <h3 class="event-title"></h3>
+                    <div class="event-meta">
+                        <span class="event-volume"></span>
+                        <span class="event-deadline"></span>
+                    </div>
+                </div>
+            </div>
+            <div class="event-outcomes"></div>
+        </article>
+    </template>
+
+    <!-- Модалка ставки -->
+    <div class="bet-modal" id="bet-modal" hidden>
+        <div class="bet-modal-backdrop"></div>
+        <div class="bet-modal-content">
+            <button class="bet-modal-close" id="bet-modal-close">&times;</button>
+            <div class="bet-modal-event-title" id="bet-event-title"></div>
+            <div class="bet-modal-outcome" id="bet-outcome">
+                <div class="outcome-label">Ставка на:</div>
+                <div class="outcome-value" id="bet-outcome-title"></div>
+            </div>
+
+            <div class="bet-amount-section">
+                <label>Сумма ставки</label>
+                <div class="amount-input-wrap">
+                    <input type="number" id="bet-amount" placeholder="0" min="10" step="10">
+                    <span class="amount-currency">₽</span>
+                </div>
+                <div class="amount-quick">
+                    <button data-amount="100">100</button>
+                    <button data-amount="500">500</button>
+                    <button data-amount="1000">1 000</button>
+                    <button data-amount="5000">5 000</button>
+                </div>
+            </div>
+
+            <div class="bet-quote" id="bet-quote">
+                <div class="quote-row">
+                    <span>Получишь акций</span>
+                    <span id="quote-shares">—</span>
+                </div>
+                <div class="quote-row">
+                    <span>Средний коэф</span>
+                    <span id="quote-odds">—</span>
+                </div>
+                <div class="quote-row quote-payout">
+                    <span>Если выиграешь</span>
+                    <span id="quote-payout">— ₽</span>
+                </div>
+            </div>
+
+            <button class="bet-confirm-btn" id="bet-confirm-btn" disabled>
+                Подтвердить ставку
+            </button>
+        </div>
+    </div>
+
+    <!-- Депозит-модалка (TON Connect) -->
+    <div class="bet-modal" id="deposit-modal" hidden>
+        <div class="bet-modal-backdrop" onclick="closeDepositModal()"></div>
+        <div class="bet-modal-content">
+            <button class="bet-modal-close" onclick="closeDepositModal()">&times;</button>
+            <div style="font-size:17px;font-weight:700;margin-bottom:4px">💎 Пополнить USDT</div>
+            <div id="deposit-rate" style="font-size:13px;color:var(--text-muted);margin-bottom:16px">Загружаем курс...</div>
+
+            <!-- Кнопка TON Connect -->
+            <div id="deposit-disconnected">
+                <p style="font-size:13px;color:var(--text-muted);margin-bottom:12px">
+                    Подключи TON-кошелёк чтобы пополнить баланс через USDT
+                </p>
+                <div id="ton-connect-button"></div>
+            </div>
+
+            <!-- После подключения -->
+            <div id="deposit-connected" hidden>
+                <div style="font-size:12px;color:var(--text-muted);margin-bottom:12px">
+                    Кошелёк: <span id="deposit-wallet-addr" style="font-family:'JetBrains Mono';color:var(--text)"></span>
+                </div>
+            </div>
+
+            <!-- Форма суммы -->
+            <div id="deposit-amount-section" hidden>
+                <label style="font-size:13px;color:var(--text-muted);display:block;margin-bottom:6px">Сумма в USDT</label>
+                <div class="amount-input-wrap">
+                    <input type="number" id="deposit-usdt-amount" placeholder="0" min="1" step="1"
+                           oninput="updateDepositRubPreview()"
+                           style="font-size:22px">
+                    <span class="amount-currency">USDT</span>
+                </div>
+                <div id="deposit-rub-preview" style="font-size:13px;color:var(--yes);min-height:18px;margin:6px 0 12px"></div>
+
+                <div class="amount-quick" style="margin-bottom:16px">
+                    <button onclick="document.getElementById('deposit-usdt-amount').value=10;updateDepositRubPreview()">10</button>
+                    <button onclick="document.getElementById('deposit-usdt-amount').value=50;updateDepositRubPreview()">50</button>
+                    <button onclick="document.getElementById('deposit-usdt-amount').value=100;updateDepositRubPreview()">100</button>
+                    <button onclick="document.getElementById('deposit-usdt-amount').value=500;updateDepositRubPreview()">500</button>
+                </div>
+
+                <button class="bet-confirm-btn" id="deposit-send-btn" onclick="sendUSDT()">
+                    Отправить USDT
+                </button>
+
+                <div id="deposit-status" hidden style="margin-top:12px;text-align:center;font-size:13px;color:var(--text-muted)">
+                    ⏳ Ожидаем подтверждения транзакции (30–120 сек)...
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="api.js"></script>
+    <script src="ton.js"></script>
+    <script src="app.js"></script>
+</body>
+</html>

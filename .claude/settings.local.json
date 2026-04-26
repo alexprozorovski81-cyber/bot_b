@@ -1,0 +1,39 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(pip --version)",
+      "Bash(pip list *)",
+      "Bash(pip install *)",
+      "Bash(python -m bot.init_db)",
+      "Bash(PYTHONUTF8=1 python -m bot.init_db)",
+      "Bash(PYTHONUTF8=1 python -m bot.seed)",
+      "Bash(PYTHONUTF8=1 python test_smoke.py)",
+      "Bash(python -m venv venv)",
+      "Bash(venv/Scripts/pip install *)",
+      "Bash(PYTHONIOENCODING=utf-8 venv/Scripts/python -m bot.main)",
+      "Bash(echo \"PID: $!\")",
+      "Bash(pkill -f \"bot.main\")",
+      "Bash(netstat -ano)",
+      "Bash(awk '{print $5}')",
+      "Bash(taskkill //F //PID 6272)",
+      "Bash(curl -s http://localhost:8000/api/me)",
+      "Bash(curl -s http://localhost:8000/api/events)",
+      "Bash(python -m json.tool)",
+      "Bash(python -c \"import sys,json; data=json.load\\(sys.stdin\\); print\\(f'Events: {len\\(data\\)}'\\); [print\\(f'  {e[\\\\\"id\\\\\"]}. {e[\\\\\"title\\\\\"][:60]}'\\) for e in data[:25]]\")",
+      "Bash(ngrok version *)",
+      "Bash(ngrok http *)",
+      "Bash(cloudflared version *)",
+      "Bash(npx --version)",
+      "Bash(curl -L -o cloudflared.exe \"https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe\")",
+      "Bash(./cloudflared.exe tunnel *)",
+      "Bash(curl -s http://127.0.0.1:4040/api/tunnels)",
+      "Bash(python -c \"import sys,json; d=json.load\\(sys.stdin\\); [print\\(t['public_url']\\) for t in d.get\\('tunnels',[]\\)]\")",
+      "Bash(ssh -o StrictHostKeyChecking=no -o ServerAliveInterval=30 -R 80:localhost:8000 nokey@localhost.run)",
+      "Bash(curl -s --connect-timeout 5 https://8.8.8.8)",
+      "Bash(curl -s --connect-timeout 5 http://example.com)",
+      "Bash(ssh -o StrictHostKeyChecking=no -o ServerAliveInterval=30 -R 80:localhost:8000 nokey@localhost.run -p 22)",
+      "Bash(ssh -o StrictHostKeyChecking=no -R 80:localhost:8000 serveo.net)",
+      "Bash(ping api.telegram.org -n 2)"
+    ]
+  }
+}

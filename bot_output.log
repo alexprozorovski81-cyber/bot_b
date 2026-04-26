@@ -1,0 +1,55 @@
+2026-04-26 14:13:44,314 [INFO] __main__: Bot starting (long polling)...
+INFO:     Started server process [9188]
+INFO:     Waiting for application startup.
+2026-04-26 14:13:45,255 [INFO] __main__: Cron task started (oracles every 5min, news every 30min)
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
+2026-04-26 14:13:55,754 [INFO] aiogram.dispatcher: Start polling
+2026-04-26 14:13:56,607 [INFO] aiogram.dispatcher: Run polling for bot @testjswndjwnjwd_bot id=8775322755 - 'test_market'
+2026-04-26 14:14:11,030 [INFO] httpx: HTTP Request: GET https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd "HTTP/1.1 200 OK"
+2026-04-26 14:14:14,598 [INFO] httpx: HTTP Request: GET https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&ids=bitcoin "HTTP/1.1 200 OK"
+2026-04-26 14:14:18,781 [INFO] httpx: HTTP Request: GET https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&ids=ethereum "HTTP/1.1 200 OK"
+2026-04-26 14:15:24,892 [INFO] aiogram.event: Update id=114721588 is not handled. Duration 16 ms by bot id=8775322755
+2026-04-26 14:16:36,536 [INFO] aiogram.event: Update id=114721589 is handled. Duration 1765 ms by bot id=8775322755
+INFO:     89.105.206.115:0 - "GET /favicon.ico HTTP/1.1" 404 Not Found
+INFO:     89.105.206.115:0 - "GET /miniapp/ HTTP/1.1" 200 OK
+INFO:     89.105.206.115:0 - "GET /miniapp/api.js HTTP/1.1" 200 OK
+INFO:     89.105.206.115:0 - "GET /miniapp/styles.css HTTP/1.1" 200 OK
+INFO:     89.105.206.115:0 - "GET /miniapp/app.js HTTP/1.1" 200 OK
+INFO:     89.105.206.115:0 - "GET /api/categories HTTP/1.1" 200 OK
+INFO:     89.105.206.115:0 - "GET /api/me HTTP/1.1" 200 OK
+INFO:     89.105.206.115:0 - "GET /api/events HTTP/1.1" 200 OK
+INFO:     89.105.206.115:0 - "GET /api/events?category=politics HTTP/1.1" 200 OK
+2026-04-26 14:19:21,188 [INFO] httpx: HTTP Request: GET https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd "HTTP/1.1 200 OK"
+2026-04-26 14:19:23,631 [INFO] httpx: HTTP Request: GET https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&ids=bitcoin "HTTP/1.1 200 OK"
+2026-04-26 14:19:25,929 [INFO] httpx: HTTP Request: GET https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&ids=ethereum "HTTP/1.1 200 OK"
+2026-04-26 14:24:27,743 [INFO] httpx: HTTP Request: GET https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd "HTTP/1.1 200 OK"
+2026-04-26 14:24:29,608 [INFO] httpx: HTTP Request: GET https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&ids=bitcoin "HTTP/1.1 200 OK"
+2026-04-26 14:24:31,435 [INFO] httpx: HTTP Request: GET https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&ids=ethereum "HTTP/1.1 429 Too Many Requests"
+2026-04-26 14:24:31,438 [WARNING] bot.services.oracle_service: CoinGecko marketcap error for ethereum: Client error '429 Too Many Requests' for url 'https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&ids=ethereum'
+For more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/429
+2026-04-26 14:29:33,269 [INFO] httpx: HTTP Request: GET https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd "HTTP/1.1 200 OK"
+2026-04-26 14:29:35,173 [INFO] httpx: HTTP Request: GET https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&ids=bitcoin "HTTP/1.1 200 OK"
+2026-04-26 14:29:36,974 [INFO] httpx: HTTP Request: GET https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&ids=ethereum "HTTP/1.1 200 OK"
+2026-04-26 14:34:38,915 [INFO] httpx: HTTP Request: GET https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd "HTTP/1.1 200 OK"
+2026-04-26 14:34:40,901 [INFO] httpx: HTTP Request: GET https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&ids=bitcoin "HTTP/1.1 200 OK"
+2026-04-26 14:34:42,843 [INFO] httpx: HTTP Request: GET https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&ids=ethereum "HTTP/1.1 200 OK"
+2026-04-26 14:39:45,340 [INFO] httpx: HTTP Request: GET https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd "HTTP/1.1 200 OK"
+2026-04-26 14:39:47,642 [INFO] httpx: HTTP Request: GET https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&ids=bitcoin "HTTP/1.1 200 OK"
+2026-04-26 14:39:53,347 [INFO] httpx: HTTP Request: GET https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&ids=ethereum "HTTP/1.1 200 OK"
+2026-04-26 14:40:00,203 [WARNING] bot.services.news_service: RSS error Яндекс.Новости — Политика: 
+2026-04-26 14:40:05,225 [WARNING] bot.services.news_service: RSS error Яндекс.Новости — Экономика: 
+2026-04-26 14:40:05,586 [INFO] httpx: HTTP Request: GET https://www.sports.ru/rss/football/russia/ "HTTP/1.1 404 Not Found"
+2026-04-26 14:40:05,587 [WARNING] bot.services.news_service: RSS error Sports.ru — Футбол Россия: Client error '404 Not Found' for url 'https://www.sports.ru/rss/football/russia/'
+For more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/404
+2026-04-26 14:40:05,843 [INFO] httpx: HTTP Request: GET https://www.sports.ru/rss/hockey/khl/ "HTTP/1.1 404 Not Found"
+2026-04-26 14:40:05,844 [WARNING] bot.services.news_service: RSS error Sports.ru — КХЛ: Client error '404 Not Found' for url 'https://www.sports.ru/rss/hockey/khl/'
+For more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/404
+2026-04-26 14:40:07,902 [INFO] httpx: HTTP Request: GET https://www.cbr.ru/scripts/XML_daily.asp "HTTP/1.1 200 OK"
+2026-04-26 14:40:07,920 [INFO] __main__: CBR USD/RUB: 75.5273
+2026-04-26 14:45:12,172 [INFO] httpx: HTTP Request: GET https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd "HTTP/1.1 200 OK"
+2026-04-26 14:45:15,077 [INFO] httpx: HTTP Request: GET https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&ids=bitcoin "HTTP/1.1 200 OK"
+2026-04-26 14:45:18,126 [INFO] httpx: HTTP Request: GET https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&ids=ethereum "HTTP/1.1 200 OK"
+2026-04-26 14:50:20,342 [INFO] httpx: HTTP Request: GET https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd "HTTP/1.1 200 OK"
+2026-04-26 14:50:22,160 [INFO] httpx: HTTP Request: GET https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&ids=bitcoin "HTTP/1.1 200 OK"
+2026-04-26 14:50:24,037 [INFO] httpx: HTTP Request: GET https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&ids=ethereum "HTTP/1.1 200 OK"
