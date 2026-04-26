@@ -2,11 +2,13 @@
 Сервис автоматического разрешения событий через внешние оракулы.
 
 Поддерживается:
-  - CoinGecko (для крипто-цен) — для событий вида "Достигнет ли BTC $X"
+  - Binance (основной, без ключа) — цены BTC, ETH, TON
+  - CoinGecko (резерв) — капитализация для flippening
   - Manual — для всех остальных, разрешает админ через /resolve
 
-Запускается раз в час через cron-task в bot/main.py.
+Запускается каждые 5 минут через cron-task в bot/main.py.
 """
+import asyncio
 import logging
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -25,52 +27,55 @@ logger = logging.getLogger(__name__)
 
 
 # Маппинг slug события → правило для оракула
-# Это упрощённая версия — в проде это хранится в БД с extensible-схемой
 ORACLE_RULES: dict[str, dict] = {
     "btc-150k-2026": {
-        "type": "coingecko_threshold",
-        "coin": "bitcoin",
+        "type": "binance_threshold",
+        "symbol": "BTCUSDT",
         "threshold_usd": 150000,
         "yes_outcome_slug": "Да",
         "no_outcome_slug": "Нет",
     },
     "ton-price-10-2026": {
-        "type": "coingecko_threshold",
-        "coin": "the-open-network",
+        "type": "binance_threshold",
+        "symbol": "TONUSDT",
         "threshold_usd": 10,
         "yes_outcome_slug": "Да, $10+",
         "no_outcome_slug": "Нет",
     },
     "eth-flippening-2026": {
-        "type": "coingecko_flippening",
+        "type": "flippening",
         "yes_outcome_slug": "Да",
         "no_outcome_slug": "Нет",
     },
 }
 
+# Binance symbol → приблизительное кол-во монет в обращении (для капитализации)
+# Обновляется редко — точность достаточна для flippening-проверки
+_CIRCULATING_SUPPLY = {
+    "BTCUSDT": Decimal("19_700_000"),
+    "ETHUSDT": Decimal("120_200_000"),
+}
 
-async def _coingecko_price(coin_id: str) -> Decimal | None:
-    """Текущая цена монеты в USD."""
-    url = "https://api.coingecko.com/api/v3/simple/price"
-    params = {"ids": coin_id, "vs_currencies": "usd"}
 
+async def _binance_price(symbol: str) -> Decimal | None:
+    """Текущая цена по паре Binance (например BTCUSDT). Без API-ключа."""
+    url = "https://api.binance.com/api/v3/ticker/price"
+    params = {"symbol": symbol}
     async with httpx.AsyncClient(timeout=10.0) as client:
         try:
             resp = await client.get(url, params=params)
             resp.raise_for_status()
-            data = resp.json()
-            price = data.get(coin_id, {}).get("usd")
+            price = resp.json().get("price")
             return Decimal(str(price)) if price else None
         except Exception as e:
-            logger.warning(f"CoinGecko error for {coin_id}: {e}")
+            logger.warning(f"Binance price error for {symbol}: {e}")
             return None
 
 
 async def _coingecko_market_cap(coin_id: str) -> Decimal | None:
-    """Капитализация монеты в USD."""
+    """Капитализация монеты в USD (резервный источник — CoinGecko)."""
     url = "https://api.coingecko.com/api/v3/coins/markets"
     params = {"vs_currency": "usd", "ids": coin_id}
-
     async with httpx.AsyncClient(timeout=10.0) as client:
         try:
             resp = await client.get(url, params=params)
@@ -86,24 +91,37 @@ async def _coingecko_market_cap(coin_id: str) -> Decimal | None:
 
 async def _check_threshold_rule(rule: dict) -> str | None:
     """
-    Проверяет, достигла ли цена монеты порога.
-    Возвращает "yes" / "no" / None (если не определилось).
+    Проверяет, достигла ли цена монеты порога через Binance.
+    Возвращает "yes" / None (если нет или ошибка).
     """
-    price = await _coingecko_price(rule["coin"])
+    price = await _binance_price(rule["symbol"])
     if price is None:
         return None
-
     threshold = Decimal(str(rule["threshold_usd"]))
     if price >= threshold:
         return "yes"
-    return None  # Пока цена ниже — событие ещё не разрешено
+    return None
 
 
 async def _check_flippening_rule(rule: dict) -> str | None:
     """
-    Проверяет, обогнал ли ETH капитализацию BTC.
+    ETH flippening: сначала пробуем через Binance × supply,
+    при ошибке — через CoinGecko.
     """
+    btc_price = await _binance_price("BTCUSDT")
+    eth_price = await _binance_price("ETHUSDT")
+
+    if btc_price and eth_price:
+        btc_cap = btc_price * _CIRCULATING_SUPPLY["BTCUSDT"]
+        eth_cap = eth_price * _CIRCULATING_SUPPLY["ETHUSDT"]
+        if eth_cap > btc_cap:
+            return "yes"
+        return None  # Условие не выполнено
+
+    # Резерв: CoinGecko (может давать 429, поэтому запасной вариант)
+    await asyncio.sleep(2)
     btc_cap = await _coingecko_market_cap("bitcoin")
+    await asyncio.sleep(2)
     eth_cap = await _coingecko_market_cap("ethereum")
     if btc_cap is None or eth_cap is None:
         return None
@@ -139,9 +157,9 @@ async def check_oracles() -> int:
             now = datetime.now(timezone.utc)
 
             result_type = None
-            if rule["type"] == "coingecko_threshold":
+            if rule["type"] == "binance_threshold":
                 result_type = await _check_threshold_rule(rule)
-            elif rule["type"] == "coingecko_flippening":
+            elif rule["type"] == "flippening":
                 result_type = await _check_flippening_rule(rule)
 
             # Если резолв-дата прошла, а условие не выполнилось — это NO
