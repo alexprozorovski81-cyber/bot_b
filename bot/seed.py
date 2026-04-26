@@ -31,6 +31,7 @@ def _events_data(now: datetime) -> list[dict]:
         {
             "slug": "ru-ceasefire-2026",
             "category": "politics",
+            "image_url": "/miniapp/images/ceasefire.svg",
             "title": "Будет ли подписано перемирие на Украине до конца 2026?",
             "description": (
                 "Будет ли официально подписано и вступит ли в силу перемирие "
@@ -44,6 +45,7 @@ def _events_data(now: datetime) -> list[dict]:
         {
             "slug": "ru-trump-meeting-2026",
             "category": "politics",
+            "image_url": "/miniapp/images/politics.svg",
             "title": "Встретится ли Путин с Трампом лично до конца 2026?",
             "description": (
                 "Состоится ли официальная очная встреча президентов России и США "
@@ -57,6 +59,7 @@ def _events_data(now: datetime) -> list[dict]:
         {
             "slug": "ru-sanctions-2026",
             "category": "politics",
+            "image_url": "/miniapp/images/politics.svg",
             "title": "Введёт ли ЕС новый пакет санкций против РФ до конца 2026?",
             "description": (
                 "Будет ли официально принят и вступит в силу новый пакет "
@@ -70,6 +73,7 @@ def _events_data(now: datetime) -> list[dict]:
         {
             "slug": "ru-duma-law-2026",
             "category": "politics",
+            "image_url": "/miniapp/images/politics.svg",
             "title": "Примет ли Госдума закон о 4-дневной рабочей неделе в 2026?",
             "description": (
                 "Будет ли принят и подписан президентом РФ федеральный закон "
@@ -83,6 +87,7 @@ def _events_data(now: datetime) -> list[dict]:
         {
             "slug": "ru-gubern-2026",
             "category": "politics",
+            "image_url": "/miniapp/images/politics.svg",
             "title": "Сменится ли мэр Москвы до конца 2026 года?",
             "description": (
                 "Уйдёт ли Сергей Собянин с поста мэра Москвы по любой причине "
@@ -98,6 +103,7 @@ def _events_data(now: datetime) -> list[dict]:
         {
             "slug": "rpl-champion-2526",
             "category": "sports",
+            "image_url": "/miniapp/images/football.svg",
             "title": "Кто станет чемпионом РПЛ сезона 2025/26?",
             "description": (
                 "Победитель чемпионата России по футболу в сезоне 2025/26 "
@@ -111,6 +117,7 @@ def _events_data(now: datetime) -> list[dict]:
         {
             "slug": "khl-champion-2526",
             "category": "sports",
+            "image_url": "/miniapp/images/hockey.svg",
             "title": "Кто выиграет Кубок Гагарина КХЛ 2025/26?",
             "description": (
                 "Победитель плей-офф КХЛ сезона 2025/26 (финал апрель–май 2026).\n\n"
@@ -123,6 +130,7 @@ def _events_data(now: datetime) -> list[dict]:
         {
             "slug": "worldcup-2026-winner",
             "category": "sports",
+            "image_url": "/miniapp/images/worldcup.svg",
             "title": "Кто выиграет Чемпионат мира по футболу 2026?",
             "description": (
                 "Победитель ЧМ-2026 (США/Канада/Мексика), финал в июле 2026.\n\n"
@@ -135,6 +143,7 @@ def _events_data(now: datetime) -> list[dict]:
         {
             "slug": "spartak-top3-2526",
             "category": "sports",
+            "image_url": "/miniapp/images/football.svg",
             "title": "Войдёт ли Спартак в топ-3 РПЛ по итогам сезона 2025/26?",
             "description": (
                 "Окажется ли ФК Спартак Москва на 1–3 месте турнирной таблицы "
@@ -148,6 +157,7 @@ def _events_data(now: datetime) -> list[dict]:
         {
             "slug": "ru-tennis-wimbledon-2026",
             "category": "sports",
+            "image_url": "/miniapp/images/tennis.svg",
             "title": "Выиграет ли российский теннисист Wimbledon 2026?",
             "description": (
                 "Станет ли спортсмен с российским паспортом (нейтральный статус) "
@@ -163,6 +173,7 @@ def _events_data(now: datetime) -> list[dict]:
         {
             "slug": "cbr-rate-below-15-2026",
             "category": "economy",
+            "image_url": "/miniapp/images/economy.svg",
             "title": "Снизит ли ЦБ РФ ключевую ставку ниже 15% до конца 2026?",
             "description": (
                 "Установит ли Банк России ключевую ставку на уровне строго ниже 15% "
@@ -176,6 +187,7 @@ def _events_data(now: datetime) -> list[dict]:
         {
             "slug": "usd-rub-100-2026",
             "category": "economy",
+            "image_url": "/miniapp/images/economy.svg",
             "title": "Превысит ли курс доллара 100 ₽ до конца 2026?",
             "description": (
                 "Будет ли официальный курс ЦБ РФ USD/RUB выше 100,00 ₽ "
@@ -189,6 +201,7 @@ def _events_data(now: datetime) -> list[dict]:
         {
             "slug": "ru-inflation-2026",
             "category": "economy",
+            "image_url": "/miniapp/images/economy.svg",
             "title": "Снизится ли инфляция в РФ ниже 7% по итогам 2026 года?",
             "description": (
                 "Будет ли официальный показатель инфляции (ИПЦ) в России "
@@ -202,6 +215,7 @@ def _events_data(now: datetime) -> list[dict]:
         {
             "slug": "ru-gdp-growth-2026",
             "category": "economy",
+            "image_url": "/miniapp/images/economy.svg",
             "title": "Вырастет ли ВВП России более чем на 1% в 2026 году?",
             "description": (
                 "Будет ли прирост ВВП России за 2026 год (по предварительной оценке "
@@ -217,6 +231,7 @@ def _events_data(now: datetime) -> list[dict]:
         {
             "slug": "btc-150k-2026",
             "category": "crypto",
+            "image_url": "/miniapp/images/btc.svg",
             "title": "Достигнет ли Bitcoin $150 000 до конца 2026?",
             "description": (
                 "Будет ли курс BTC/USD на любой бирже из топ-10 (Binance, Coinbase, "
@@ -230,6 +245,7 @@ def _events_data(now: datetime) -> list[dict]:
         {
             "slug": "ton-price-10-2026",
             "category": "crypto",
+            "image_url": "/miniapp/images/ton.svg",
             "title": "Достигнет ли TON цены $10 до конца 2026?",
             "description": (
                 "Будет ли курс TON/USD на любой бирже из топ-10 выше $10,00 "
@@ -243,6 +259,7 @@ def _events_data(now: datetime) -> list[dict]:
         {
             "slug": "eth-flippening-2026",
             "category": "crypto",
+            "image_url": "/miniapp/images/eth.svg",
             "title": "Обгонит ли Ethereum капитализацию Bitcoin в 2026?",
             "description": (
                 "Превысит ли рыночная капитализация Ethereum капитализацию Bitcoin "
@@ -258,6 +275,7 @@ def _events_data(now: datetime) -> list[dict]:
         {
             "slug": "ru-gosuslugi-ai-2026",
             "category": "tech",
+            "image_url": "/miniapp/images/tech.svg",
             "title": "Запустит ли Госуслуги ИИ-ассистента для граждан в 2026?",
             "description": (
                 "Будет ли публично запущен ИИ-чат-ассистент (на базе любой модели) "
@@ -271,6 +289,7 @@ def _events_data(now: datetime) -> list[dict]:
         {
             "slug": "yandex-gpt-new-2026",
             "category": "tech",
+            "image_url": "/miniapp/images/tech.svg",
             "title": "Выпустит ли Яндекс новую большую языковую модель в 2026?",
             "description": (
                 "Будет ли публично анонсирована и доступна новая флагманская LLM "
@@ -286,6 +305,7 @@ def _events_data(now: datetime) -> list[dict]:
         {
             "slug": "us-recession-2026",
             "category": "world",
+            "image_url": "/miniapp/images/world.svg",
             "title": "Войдут ли США в рецессию в 2026 году?",
             "description": (
                 "Зафиксируют ли США два последовательных квартала с отрицательным "

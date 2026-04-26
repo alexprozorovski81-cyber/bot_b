@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 400">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#111827"/>
+      <stop offset="100%" stop-color="#0e0e1f"/>
+    </linearGradient>
+    <radialGradient id="gl" cx="65%" cy="50%" r="55%">
+      <stop offset="0%" stop-color="#6366f1" stop-opacity="0.22"/>
+      <stop offset="100%" stop-color="#6366f1" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect width="800" height="400" fill="url(#bg)"/>
+  <rect width="800" height="400" fill="url(#gl)"/>
+  <circle cx="590" cy="200" r="160" fill="none" stroke="#6366f1" stroke-width="1.5" opacity="0.12"/>
+  <!-- Greek columns (government building) -->
+  <rect x="480" y="120" width="22" height="160" rx="4" fill="#6366f1" opacity="0.55"/>
+  <rect x="520" y="120" width="22" height="160" rx="4" fill="#6366f1" opacity="0.55"/>
+  <rect x="560" y="120" width="22" height="160" rx="4" fill="#6366f1" opacity="0.55"/>
+  <rect x="600" y="120" width="22" height="160" rx="4" fill="#6366f1" opacity="0.55"/>
+  <rect x="640" y="120" width="22" height="160" rx="4" fill="#6366f1" opacity="0.55"/>
+  <rect x="680" y="120" width="22" height="160" rx="4" fill="#6366f1" opacity="0.55"/>
+  <!-- Pediment (triangle top) -->
+  <polygon points="462,120 720,120 591,68" fill="#818cf8" opacity="0.4"/>
+  <!-- Base -->
+  <rect x="458" y="280" width="266" height="14" rx="3" fill="#818cf8" opacity="0.35"/>
+  <rect x="450" y="294" width="282" height="10" rx="3" fill="#6366f1" opacity="0.25"/>
+  <!-- Label chip -->
+  <rect x="36" y="338" width="118" height="30" rx="15" fill="#6366f1" fill-opacity="0.12"/>
+  <text x="95" y="358" font-family="Arial,sans-serif" font-size="13" font-weight="700"
+        text-anchor="middle" fill="#818cf8" letter-spacing="1.5">ПОЛИТИКА</text>
+</svg>

@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 400">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#111827"/>
+      <stop offset="100%" stop-color="#130f18"/>
+    </linearGradient>
+    <radialGradient id="gl" cx="65%" cy="50%" r="55%">
+      <stop offset="0%" stop-color="#f43f5e" stop-opacity="0.2"/>
+      <stop offset="100%" stop-color="#f43f5e" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect width="800" height="400" fill="url(#bg)"/>
+  <rect width="800" height="400" fill="url(#gl)"/>
+  <circle cx="590" cy="200" r="155" fill="none" stroke="#f43f5e" stroke-width="1.5" opacity="0.12"/>
+  <circle cx="590" cy="200" r="115" fill="none" stroke="#f43f5e" stroke-width="1" opacity="0.08"/>
+  <!-- Peace symbol: outer circle -->
+  <circle cx="590" cy="200" r="95" fill="none" stroke="#f43f5e" stroke-width="8" opacity="0.6"/>
+  <!-- Peace symbol: vertical line -->
+  <line x1="590" y1="105" x2="590" y2="295" stroke="#f43f5e" stroke-width="8" opacity="0.6"/>
+  <!-- Peace symbol: diagonal lines -->
+  <line x1="590" y1="200" x2="523" y2="267" stroke="#f43f5e" stroke-width="8" opacity="0.6"/>
+  <line x1="590" y1="200" x2="657" y2="267" stroke="#f43f5e" stroke-width="8" opacity="0.6"/>
+  <!-- Label chip -->
+  <rect x="36" y="338" width="130" height="30" rx="15" fill="#f43f5e" fill-opacity="0.12"/>
+  <text x="101" y="358" font-family="Arial,sans-serif" font-size="13" font-weight="700"
+        text-anchor="middle" fill="#f43f5e" letter-spacing="1.5">ПЕРЕМИРИЕ</text>
+</svg>

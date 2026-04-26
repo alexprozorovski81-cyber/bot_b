@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 400">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#111827"/>
+      <stop offset="100%" stop-color="#080f12"/>
+    </linearGradient>
+    <radialGradient id="gl" cx="65%" cy="50%" r="55%">
+      <stop offset="0%" stop-color="#14b8a6" stop-opacity="0.22"/>
+      <stop offset="100%" stop-color="#14b8a6" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect width="800" height="400" fill="url(#bg)"/>
+  <rect width="800" height="400" fill="url(#gl)"/>
+  <!-- Globe outer circle -->
+  <circle cx="590" cy="200" r="130" fill="none" stroke="#14b8a6" stroke-width="2" opacity="0.45"/>
+  <circle cx="590" cy="200" r="128" fill="#111827" opacity="0.4"/>
+  <!-- Latitude lines -->
+  <ellipse cx="590" cy="200" rx="130" ry="40" fill="none" stroke="#14b8a6" stroke-width="1" opacity="0.2"/>
+  <ellipse cx="590" cy="160" rx="105" ry="30" fill="none" stroke="#14b8a6" stroke-width="1" opacity="0.15"/>
+  <ellipse cx="590" cy="240" rx="105" ry="30" fill="none" stroke="#14b8a6" stroke-width="1" opacity="0.15"/>
+  <!-- Longitude lines -->
+  <line x1="590" y1="70" x2="590" y2="330" stroke="#14b8a6" stroke-width="1" opacity="0.2"/>
+  <ellipse cx="590" cy="200" rx="65" ry="130" fill="none" stroke="#14b8a6" stroke-width="1" opacity="0.18"/>
+  <ellipse cx="590" cy="200" rx="110" ry="130" fill="none" stroke="#14b8a6" stroke-width="1" opacity="0.12"/>
+  <!-- Continent blob 1 (Eurasia-like) -->
+  <path d="M520,155 Q550,140 590,145 Q630,140 660,160 Q670,175 655,188 Q640,200 610,195 Q590,198 570,190 Q545,182 520,170 Z"
+        fill="#14b8a6" opacity="0.35"/>
+  <!-- Continent blob 2 (Americas-like) -->
+  <path d="M510,195 Q525,185 540,192 Q548,205 542,220 Q535,235 518,230 Q505,218 510,195 Z"
+        fill="#14b8a6" opacity="0.3"/>
+  <!-- Continent blob 3 (Africa-like) -->
+  <path d="M600,210 Q618,205 630,218 Q638,235 625,250 Q610,260 598,248 Q586,230 600,210 Z"
+        fill="#14b8a6" opacity="0.3"/>
+  <!-- Glow dot on globe -->
+  <circle cx="590" cy="200" r="4" fill="#2dd4bf" opacity="0.6"/>
+  <!-- Label chip -->
+  <rect x="36" y="338" width="90" height="30" rx="15" fill="#14b8a6" fill-opacity="0.12"/>
+  <text x="81" y="358" font-family="Arial,sans-serif" font-size="13" font-weight="700"
+        text-anchor="middle" fill="#2dd4bf" letter-spacing="1.5">МИР</text>
+</svg>

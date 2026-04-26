@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 400">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#111827"/>
+      <stop offset="100%" stop-color="#120e08"/>
+    </linearGradient>
+    <radialGradient id="gl" cx="65%" cy="50%" r="55%">
+      <stop offset="0%" stop-color="#f97316" stop-opacity="0.22"/>
+      <stop offset="100%" stop-color="#f97316" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect width="800" height="400" fill="url(#bg)"/>
+  <rect width="800" height="400" fill="url(#gl)"/>
+  <circle cx="590" cy="200" r="160" fill="none" stroke="#f97316" stroke-width="1.5" opacity="0.12"/>
+  <!-- Football (soccer ball) -->
+  <circle cx="590" cy="200" r="110" fill="none" stroke="#f97316" stroke-width="2" opacity="0.55"/>
+  <circle cx="590" cy="200" r="108" fill="#111827" opacity="0.6"/>
+  <!-- Pentagon patches (simplified) -->
+  <polygon points="590,110 622,132 610,168 570,168 558,132"
+           fill="#f97316" opacity="0.55"/>
+  <polygon points="698,162 686,198 656,208 638,182 654,154"
+           fill="#f97316" opacity="0.45"/>
+  <polygon points="662,278 630,296 604,274 614,244 648,240"
+           fill="#f97316" opacity="0.45"/>
+  <polygon points="518,278 530,244 564,240 574,274 548,296"
+           fill="#f97316" opacity="0.45"/>
+  <polygon points="482,162 526,154 542,182 524,208 494,198"
+           fill="#f97316" opacity="0.45"/>
+  <!-- Stitches connecting patches -->
+  <line x1="590" y1="168" x2="590" y2="110" stroke="#fb923c" stroke-width="1.5" opacity="0.3"/>
+  <line x1="610" y1="168" x2="654" y2="154" stroke="#fb923c" stroke-width="1.5" opacity="0.3"/>
+  <line x1="622" y1="132" x2="654" y2="154" stroke="#fb923c" stroke-width="1.5" opacity="0.3"/>
+  <!-- Label chip -->
+  <rect x="36" y="338" width="104" height="30" rx="15" fill="#f97316" fill-opacity="0.12"/>
+  <text x="88" y="358" font-family="Arial,sans-serif" font-size="13" font-weight="700"
+        text-anchor="middle" fill="#f97316" letter-spacing="1.5">ФУТБОЛ</text>
+</svg>

@@ -1,0 +1,42 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 400">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#111827"/>
+      <stop offset="100%" stop-color="#0b1208"/>
+    </linearGradient>
+    <radialGradient id="gl" cx="65%" cy="50%" r="55%">
+      <stop offset="0%" stop-color="#84cc16" stop-opacity="0.22"/>
+      <stop offset="100%" stop-color="#84cc16" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect width="800" height="400" fill="url(#bg)"/>
+  <rect width="800" height="400" fill="url(#gl)"/>
+  <circle cx="590" cy="200" r="160" fill="none" stroke="#84cc16" stroke-width="1.5" opacity="0.12"/>
+  <!-- Tennis racket frame -->
+  <ellipse cx="580" cy="175" rx="70" ry="85" fill="none" stroke="#84cc16" stroke-width="7" opacity="0.7"/>
+  <!-- Racket strings (vertical) -->
+  <line x1="526" y1="135" x2="526" y2="215" stroke="#a3e635" stroke-width="1.5" opacity="0.35"/>
+  <line x1="546" y1="112" x2="546" y2="238" stroke="#a3e635" stroke-width="1.5" opacity="0.35"/>
+  <line x1="566" y1="102" x2="566" y2="248" stroke="#a3e635" stroke-width="1.5" opacity="0.35"/>
+  <line x1="586" y1="100" x2="586" y2="250" stroke="#a3e635" stroke-width="1.5" opacity="0.35"/>
+  <line x1="606" y1="102" x2="606" y2="248" stroke="#a3e635" stroke-width="1.5" opacity="0.35"/>
+  <line x1="626" y1="112" x2="626" y2="238" stroke="#a3e635" stroke-width="1.5" opacity="0.35"/>
+  <line x1="646" y1="135" x2="646" y2="215" stroke="#a3e635" stroke-width="1.5" opacity="0.35"/>
+  <!-- Racket strings (horizontal) -->
+  <line x1="516" y1="148" x2="646" y2="148" stroke="#a3e635" stroke-width="1.5" opacity="0.35"/>
+  <line x1="512" y1="168" x2="650" y2="168" stroke="#a3e635" stroke-width="1.5" opacity="0.35"/>
+  <line x1="512" y1="188" x2="650" y2="188" stroke="#a3e635" stroke-width="1.5" opacity="0.35"/>
+  <line x1="516" y1="208" x2="646" y2="208" stroke="#a3e635" stroke-width="1.5" opacity="0.35"/>
+  <!-- Racket throat & handle -->
+  <path d="M545,258 L555,298 M617,258 L607,298" fill="none" stroke="#84cc16" stroke-width="7" opacity="0.6"/>
+  <line x1="555" y1="298" x2="607" y2="298" stroke="#84cc16" stroke-width="7" stroke-linecap="round" opacity="0.6"/>
+  <line x1="581" y1="298" x2="570" y2="355" stroke="#84cc16" stroke-width="11" stroke-linecap="round" opacity="0.65"/>
+  <!-- Tennis ball -->
+  <circle cx="680" cy="280" r="28" fill="#bef264" opacity="0.75"/>
+  <path d="M658,268 Q668,258 680,268 Q692,278 702,268" fill="none" stroke="#4d7c0f" stroke-width="2.5" opacity="0.6"/>
+  <path d="M658,292 Q668,302 680,292 Q692,282 702,292" fill="none" stroke="#4d7c0f" stroke-width="2.5" opacity="0.6"/>
+  <!-- Label chip -->
+  <rect x="36" y="338" width="108" height="30" rx="15" fill="#84cc16" fill-opacity="0.12"/>
+  <text x="90" y="358" font-family="Arial,sans-serif" font-size="13" font-weight="700"
+        text-anchor="middle" fill="#a3e635" letter-spacing="1.5">ТЕННИС</text>
+</svg>

@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 400">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#111827"/>
+      <stop offset="100%" stop-color="#0a1410"/>
+    </linearGradient>
+    <radialGradient id="gl" cx="65%" cy="50%" r="55%">
+      <stop offset="0%" stop-color="#10b981" stop-opacity="0.22"/>
+      <stop offset="100%" stop-color="#10b981" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect width="800" height="400" fill="url(#bg)"/>
+  <rect width="800" height="400" fill="url(#gl)"/>
+  <circle cx="590" cy="200" r="160" fill="none" stroke="#10b981" stroke-width="1.5" opacity="0.11"/>
+  <!-- Bar chart -->
+  <rect x="468" y="230" width="36" height="80"  rx="4" fill="#10b981" opacity="0.35"/>
+  <rect x="518" y="200" width="36" height="110" rx="4" fill="#10b981" opacity="0.45"/>
+  <rect x="568" y="160" width="36" height="150" rx="4" fill="#10b981" opacity="0.60"/>
+  <rect x="618" y="130" width="36" height="180" rx="4" fill="#10b981" opacity="0.75"/>
+  <rect x="668" y="100" width="36" height="210" rx="4" fill="#34d399" opacity="0.9"/>
+  <!-- Rising trend line -->
+  <polyline points="486,295 536,270 586,235 636,195 686,155"
+            fill="none" stroke="#6ee7b7" stroke-width="3" stroke-linecap="round"
+            stroke-linejoin="round" opacity="0.7"/>
+  <!-- Arrow tip -->
+  <polygon points="686,155 700,148 692,165" fill="#6ee7b7" opacity="0.7"/>
+  <!-- Baseline -->
+  <line x1="454" y1="312" x2="718" y2="312" stroke="#10b981" stroke-width="1" opacity="0.2"/>
+  <!-- Label chip -->
+  <rect x="36" y="338" width="128" height="30" rx="15" fill="#10b981" fill-opacity="0.12"/>
+  <text x="100" y="358" font-family="Arial,sans-serif" font-size="13" font-weight="700"
+        text-anchor="middle" fill="#10b981" letter-spacing="1.5">ЭКОНОМИКА</text>
+</svg>

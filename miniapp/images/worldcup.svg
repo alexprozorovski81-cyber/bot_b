@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 400">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#111827"/>
+      <stop offset="100%" stop-color="#12100a"/>
+    </linearGradient>
+    <radialGradient id="gl" cx="65%" cy="50%" r="55%">
+      <stop offset="0%" stop-color="#eab308" stop-opacity="0.22"/>
+      <stop offset="100%" stop-color="#eab308" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect width="800" height="400" fill="url(#bg)"/>
+  <rect width="800" height="400" fill="url(#gl)"/>
+  <circle cx="590" cy="200" r="160" fill="none" stroke="#eab308" stroke-width="1.5" opacity="0.12"/>
+  <!-- Trophy cup body -->
+  <path d="M530,100 L650,100 L640,220 Q620,270 590,280 Q560,270 540,220 Z"
+        fill="#eab308" opacity="0.6"/>
+  <!-- Trophy cup highlight -->
+  <path d="M550,110 L630,110 L622,200 Q610,235 590,243 Q570,235 558,200 Z"
+        fill="#fbbf24" opacity="0.3"/>
+  <!-- Trophy handles -->
+  <path d="M530,100 Q490,100 488,140 Q486,180 530,185" fill="none" stroke="#eab308" stroke-width="10" stroke-linecap="round" opacity="0.55"/>
+  <path d="M650,100 Q690,100 692,140 Q694,180 650,185" fill="none" stroke="#eab308" stroke-width="10" stroke-linecap="round" opacity="0.55"/>
+  <!-- Trophy stem -->
+  <rect x="576" y="280" width="28" height="32" rx="4" fill="#ca8a04" opacity="0.7"/>
+  <!-- Trophy base -->
+  <rect x="548" y="312" width="84" height="16" rx="6" fill="#eab308" opacity="0.6"/>
+  <rect x="540" y="328" width="100" height="10" rx="5" fill="#ca8a04" opacity="0.5"/>
+  <!-- Star on cup -->
+  <polygon points="590,140 597,160 618,160 602,173 608,193 590,181 572,193 578,173 562,160 583,160"
+           fill="#fef08a" opacity="0.6"/>
+  <!-- Label chip -->
+  <rect x="36" y="338" width="120" height="30" rx="15" fill="#eab308" fill-opacity="0.12"/>
+  <text x="96" y="358" font-family="Arial,sans-serif" font-size="13" font-weight="700"
+        text-anchor="middle" fill="#eab308" letter-spacing="1.5">ЧМ 2026</text>
+</svg>
