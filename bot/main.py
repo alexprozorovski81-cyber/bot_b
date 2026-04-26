@@ -114,7 +114,33 @@ async def _run_news_scan() -> None:
         logger.warning(f"News scan error: {e}")
 
 
+async def init_database() -> None:
+    """Создаёт таблицы и заполняет начальными данными если БД пустая."""
+    from db.database import engine, AsyncSessionLocal
+    from db.models import Base
+    from sqlalchemy import text
+
+    # Создаём таблицы
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    logger.info("Database schema ready")
+
+    # Заполняем данными только если БД пустая
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(text("SELECT COUNT(*) FROM events"))
+        count = result.scalar()
+        if count == 0:
+            logger.info("Database is empty, seeding...")
+            try:
+                from bot.seed import seed
+                await seed()
+                logger.info("Database seeded successfully")
+            except Exception as e:
+                logger.warning(f"Seed error: {e}")
+
+
 async def main() -> None:
+    await init_database()
     await asyncio.gather(
         run_bot(),
         run_api(),
