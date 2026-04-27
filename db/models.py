@@ -121,6 +121,9 @@ class Event(Base):
     # Источник правды для разрешения (URL, описание)
     resolution_source: Mapped[str | None] = mapped_column(Text)
 
+    # URL статьи-новости, из которой создано событие
+    article_url: Mapped[str | None] = mapped_column(String(512))
+
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=datetime.utcnow
     )
@@ -237,6 +240,22 @@ class Payment(Base):
         DateTime(timezone=True), default=datetime.utcnow
     )
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class Comment(Base):
+    """Комментарий к событию — только от участников ставки."""
+    __tablename__ = "comments"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    event_id: Mapped[int] = mapped_column(ForeignKey("events.id"), index=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    text: Mapped[str] = mapped_column(String(500))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=datetime.utcnow, index=True
+    )
+
+    event: Mapped["Event"] = relationship()
+    user: Mapped["User"] = relationship()
 
 
 # Дополнительные индексы для производительности

@@ -26,7 +26,7 @@ from bot.services.bet_service import quote_bet, place_bet, BetError
 from bot.services.user_service import get_or_create_user, get_user_stats
 from db.database import AsyncSessionLocal
 from db.models import (
-    Category, Event, EventStatus, Outcome, Bet, User,
+    Category, Comment, Event, EventStatus, Outcome, Bet, User,
 )
 
 
@@ -163,6 +163,7 @@ async def list_events(
     result = await session.execute(query)
     events = result.scalars().all()
 
+    from sqlalchemy import func
     response = []
     for event in events:
         outcomes_result = await session.execute(
@@ -176,14 +177,27 @@ async def list_events(
         prices = market_engine.get_prices(q, b) if outcomes else []
         odds = market_engine.get_odds(q, b) if outcomes else []
 
+        vol_result = await session.execute(
+            select(func.coalesce(func.sum(Bet.amount_rub), 0)).where(Bet.event_id == event.id)
+        )
+        volume = vol_result.scalar() or 0
+
+        players_result = await session.execute(
+            select(func.count(func.distinct(Bet.user_id))).where(Bet.event_id == event.id)
+        )
+        players = players_result.scalar() or 0
+
         response.append({
             "id": event.id,
             "slug": event.slug,
             "title": event.title,
             "description": event.description,
             "image_url": event.image_url,
+            "article_url": event.article_url,
             "closes_at": event.closes_at.isoformat(),
             "category_id": event.category_id,
+            "volume_rub": float(volume),
+            "players_count": players,
             "outcomes": [
                 {
                     "id": o.id,
@@ -235,12 +249,24 @@ async def get_event(
     )
     players = players_result.scalar() or 0
 
+    # Похожие события той же категории
+    similar_result = await session.execute(
+        select(Event)
+        .where(Event.category_id == event.category_id)
+        .where(Event.id != event.id)
+        .where(Event.status == EventStatus.ACTIVE)
+        .order_by(Event.closes_at)
+        .limit(3)
+    )
+    similar_events = similar_result.scalars().all()
+
     return {
         "id": event.id,
         "slug": event.slug,
         "title": event.title,
         "description": event.description,
         "image_url": event.image_url,
+        "article_url": event.article_url,
         "status": event.status.value,
         "closes_at": event.closes_at.isoformat(),
         "category": {"emoji": cat.emoji, "name": cat.name} if cat else None,
@@ -248,6 +274,15 @@ async def get_event(
             "volume_rub": float(volume),
             "players_count": players,
         },
+        "similar_events": [
+            {
+                "id": e.id,
+                "title": e.title,
+                "image_url": e.image_url,
+                "closes_at": e.closes_at.isoformat(),
+            }
+            for e in similar_events
+        ],
         "outcomes": [
             {
                 "id": o.id,
@@ -466,6 +501,80 @@ async def ton_deposit_status(
         }
 
     return {"status": "pending"}
+
+
+# ── Комментарии ────────────────────────────────────────────────────────────────
+
+@app.get("/api/events/{event_id}/comments")
+async def get_comments(
+    event_id: int,
+    session: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Список комментариев к событию (публичный)."""
+    result = await session.execute(
+        select(Comment, User)
+        .join(User, Comment.user_id == User.id)
+        .where(Comment.event_id == event_id)
+        .order_by(Comment.created_at.desc())
+        .limit(50)
+    )
+    rows = result.all()
+    return [
+        {
+            "id": comment.id,
+            "text": comment.text,
+            "created_at": comment.created_at.isoformat(),
+            "username": user.username or user.first_name or "Аноним",
+        }
+        for comment, user in rows
+    ]
+
+
+class CommentRequest(BaseModel):
+    text: str
+
+
+@app.post("/api/events/{event_id}/comments")
+async def add_comment(
+    event_id: int,
+    body: CommentRequest,
+    tg_user: Annotated[dict, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Добавить комментарий. Только для пользователей со ставкой на событие."""
+    if not body.text or not body.text.strip():
+        raise HTTPException(400, "Текст не может быть пустым")
+    if len(body.text) > 500:
+        raise HTTPException(400, "Максимум 500 символов")
+
+    user, _ = await get_or_create_user(
+        session,
+        telegram_id=tg_user["id"],
+        username=tg_user.get("username"),
+        first_name=tg_user.get("first_name"),
+    )
+
+    bet_result = await session.execute(
+        select(Bet).where(Bet.event_id == event_id, Bet.user_id == user.id).limit(1)
+    )
+    if not bet_result.scalar_one_or_none():
+        raise HTTPException(403, "Только участники могут оставлять комментарии")
+
+    comment = Comment(
+        event_id=event_id,
+        user_id=user.id,
+        text=body.text.strip(),
+    )
+    session.add(comment)
+    await session.commit()
+    await session.refresh(comment)
+
+    return {
+        "id": comment.id,
+        "text": comment.text,
+        "created_at": comment.created_at.isoformat(),
+        "username": user.username or user.first_name or "Аноним",
+    }
 
 
 # Раздаём Mini App статикой

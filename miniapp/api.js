@@ -24,7 +24,9 @@ async function apiRequest(path, options = {}) {
 
     if (!res.ok) {
         const err = await res.json().catch(() => ({}));
-        throw new Error(err.detail || `HTTP ${res.status}`);
+        const error = new Error(err.detail || `HTTP ${res.status}`);
+        error.status = res.status;
+        throw error;
     }
     return res.json();
 }
@@ -48,4 +50,10 @@ const api = {
             body: JSON.stringify({ event_id, outcome_id, amount_rub }),
         }),
     myBets: () => apiRequest('/api/my/bets'),
+    comments: (eventId) => apiRequest(`/api/events/${eventId}/comments`),
+    postComment: (eventId, text) =>
+        apiRequest(`/api/events/${eventId}/comments`, {
+            method: 'POST',
+            body: JSON.stringify({ text }),
+        }),
 };

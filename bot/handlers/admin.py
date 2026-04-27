@@ -9,6 +9,7 @@
 
 Доступ только для пользователей из ADMIN_IDS в .env.
 """
+import hashlib
 import logging
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
@@ -216,6 +217,7 @@ async def addevent_confirm(callback: CallbackQuery, state: FSMContext) -> None:
             title=data["title"],
             description=data["title"],
             image_url=image_url,
+            article_url=data.get("prefill_article_url"),
             category_id=data["category_id"],
             status=EventStatus.ACTIVE,
             liquidity_b=Decimal("1000.00"),
@@ -287,6 +289,7 @@ async def news_addevent_btn(callback: CallbackQuery, state: FSMContext) -> None:
         await state.update_data(
             prefill_image_url=news_item.get("image_url"),
             prefill_title=news_item.get("title", ""),
+            prefill_article_url=news_item.get("article_url"),
         )
 
     await state.set_state(AddEventStates.title)
@@ -300,6 +303,109 @@ async def news_addevent_btn(callback: CallbackQuery, state: FSMContext) -> None:
         parse_mode="HTML",
     )
     await callback.answer()
+
+
+# ── Быстрая публикация события из новости (один тап) ─────────────────────────
+
+@router.callback_query(F.data.startswith("news:quick:"))
+async def news_quick_publish(callback: CallbackQuery) -> None:
+    """Нажатие «⚡ Быстро опубликовать» — создаёт ACTIVE событие одним тапом."""
+    if not is_admin(callback.from_user.id):
+        await callback.answer("Только для администратора", show_alert=True)
+        return
+
+    parts = callback.data.split(":")
+    news_hash = parts[2] if len(parts) > 2 else None
+    if not news_hash:
+        await callback.answer("Ошибка: хэш новости не найден", show_alert=True)
+        return
+
+    from bot.services.news_service import get_item_by_hash
+    news_item = get_item_by_hash(news_hash)
+    if not news_item:
+        await callback.answer("Новость устарела. Запусти /newscheck снова.", show_alert=True)
+        return
+
+    await callback.answer("⏳ Создаю событие...")
+    await callback.message.edit_reply_markup(reply_markup=None)
+
+    title = news_item.get("title", "")
+    category_slug = news_item.get("category", "world")
+    article_url = news_item.get("article_url")
+    description = (news_item.get("description") or title)[:300]
+
+    now = datetime.now(timezone.utc)
+    closes_at = now + timedelta(days=7)
+
+    slug_hash = hashlib.md5(title.encode()).hexdigest()[:8]
+    slug = f"news-{slug_hash}-{now.year}"
+
+    # Подтягиваем категорию из БД
+    async with AsyncSessionLocal() as session:
+        from sqlalchemy import select as sa_select
+        cat_result = await session.execute(
+            sa_select(Category).where(Category.slug == category_slug)
+        )
+        category = cat_result.scalar_one_or_none()
+        if not category:
+            cat_result = await session.execute(sa_select(Category).limit(1))
+            category = cat_result.scalar_one_or_none()
+        if not category:
+            await callback.message.answer("❌ Категории не найдены в БД")
+            return
+
+        image_url = await pick_event_image(
+            title=title,
+            category_slug=category.slug,
+            prefilled=news_item.get("image_url"),
+            slug=slug,
+        )
+
+        # Проверяем уникальность slug
+        existing = await session.execute(
+            sa_select(Event).where(Event.slug == slug)
+        )
+        if existing.scalar_one_or_none():
+            slug = f"news-{slug_hash}-{int(now.timestamp())}"
+
+        event = Event(
+            slug=slug,
+            title=title,
+            description=description,
+            image_url=image_url,
+            article_url=article_url,
+            category_id=category.id,
+            status=EventStatus.ACTIVE,
+            liquidity_b=Decimal("1000.00"),
+            closes_at=closes_at,
+            resolves_at=closes_at + timedelta(days=7),
+            resolution_source=article_url,
+        )
+        session.add(event)
+        await session.flush()
+
+        for i, outcome_title in enumerate(["Да", "Нет"]):
+            session.add(Outcome(
+                event_id=event.id,
+                title=outcome_title,
+                sort_order=i,
+            ))
+
+        await session.commit()
+        event_id = event.id
+        logger.info(
+            f"Quick event #{event_id} '{title[:60]}' created from news "
+            f"(slug={slug}, image={image_url})"
+        )
+
+    await callback.message.answer(
+        f"<b>✅ Событие #{event_id} опубликовано!</b>\n\n"
+        f"«{title}»\n\n"
+        f"📂 Категория: {category.name}\n"
+        f"⏰ Закрывается: {closes_at.strftime('%d.%m.%Y')}\n\n"
+        f"Чтобы разрешить: <code>/resolve {event_id}</code>",
+        parse_mode="HTML",
+    )
 
 
 # ── Ручная проверка парсера ──────────────────────────────────────────────────
@@ -348,6 +454,10 @@ async def cmd_newscheck(message: Message) -> None:
             InlineKeyboardButton(
                 text="➕ Создать событие",
                 callback_data=f"news:addevent:{it['hash']}",
+            ),
+            InlineKeyboardButton(
+                text="⚡ Быстро опубликовать",
+                callback_data=f"news:quick:{it['hash']}",
             ),
         ]])
         try:

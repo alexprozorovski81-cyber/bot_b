@@ -32,6 +32,16 @@ const fmtDeadline = (iso) => {
     return date.toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' });
 };
 
+function fmtCountdown(iso) {
+    const diff = new Date(iso) - new Date();
+    if (diff <= 0) return 'Завершено';
+    const d = Math.floor(diff / 86400000);
+    const h = Math.floor((diff % 86400000) / 3600000);
+    const m = Math.floor((diff % 3600000) / 60000);
+    const s = Math.floor((diff % 60000) / 1000);
+    return `${d}д ${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
+}
+
 const fmtVolume = (v) => {
     if (v >= 1_000_000) return (v / 1_000_000).toFixed(1) + 'M ₽';
     if (v >= 1_000)     return Math.round(v / 1_000) + 'K ₽';
@@ -194,15 +204,28 @@ function buildEventCard(event) {
     titleEl.style.cursor = 'pointer';
     titleEl.onclick = () => openEventDetail(event.id);
 
-    // Мета
-    const deadline = fmtDeadline(event.closes_at);
-    const isClosingSoon = (new Date(event.closes_at) - Date.now()) < 86400000 * 2;
+    // Ссылка на источник под заголовком
+    if (event.article_url) {
+        const srcLink = document.createElement('a');
+        srcLink.className = 'event-source-link';
+        srcLink.href = event.article_url;
+        srcLink.target = '_blank';
+        srcLink.rel = 'noopener noreferrer';
+        srcLink.textContent = '🔗 Читать источник';
+        titleEl.after(srcLink);
+    }
 
-    card.querySelector('.event-volume').innerHTML = `📊 ${event.outcomes.length} исхода`;
-    card.querySelector('.event-deadline').innerHTML =
-        isClosingSoon
-            ? `<span style="color:var(--no)">⏰ ${deadline}</span>`
-            : `⏱ ${deadline}`;
+    // Мета: живой таймер + статистика участников
+    const isClosingSoon = (new Date(event.closes_at) - Date.now()) < 86400000 * 2;
+    const players = event.players_count || 0;
+    const volume = event.volume_rub || 0;
+
+    card.querySelector('.event-volume').innerHTML =
+        `👥 ${players} · 💰 ${fmtVolume(volume)}`;
+    const deadlineEl = card.querySelector('.event-deadline');
+    deadlineEl.innerHTML = isClosingSoon
+        ? `<span style="color:var(--no)">⏰ <span data-closes-at="${event.closes_at}">${fmtCountdown(event.closes_at)}</span></span>`
+        : `⏱ <span data-closes-at="${event.closes_at}">${fmtCountdown(event.closes_at)}</span>`;
 
     // Исходы
     const outcomesDiv = card.querySelector('.event-outcomes');
@@ -680,10 +703,18 @@ async function openEventDetail(eventId) {
                         <div class="stat-value">${event.stats.players_count}</div>
                     </div>
                     <div class="stat-pill">
-                        <div class="stat-label">Закрытие</div>
-                        <div class="stat-value" style="${isHot ? 'color:var(--no)' : ''}">${fmtDeadline(event.closes_at)}</div>
+                        <div class="stat-label">До закрытия</div>
+                        <div class="stat-value" style="${isHot ? 'color:var(--no)' : ''}">
+                            <span data-closes-at="${event.closes_at}">${fmtCountdown(event.closes_at)}</span>
+                        </div>
                     </div>
                 </div>
+                ${event.article_url ? `
+                <div class="event-source-block">
+                    <a href="${event.article_url}" target="_blank" rel="noopener noreferrer" class="event-source-btn">
+                        📰 Читать источник новости
+                    </a>
+                </div>` : ''}
 
                 <!-- График вероятностей -->
                 <div class="chart-container">
@@ -698,6 +729,33 @@ async function openEventDetail(eventId) {
                     <h3 style="margin-bottom:10px;font-size:13px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.6px">Сделать ставку</h3>
                 </div>
                 <div class="event-detail-outcomes">${outcomesHtml}</div>
+
+                ${event.similar_events && event.similar_events.length ? `
+                <div class="similar-events-section">
+                    <h3 class="section-title">🔥 Похожие события</h3>
+                    <div class="similar-events-scroll">
+                        ${event.similar_events.map(se => `
+                            <div class="similar-card" onclick="openEventDetail(${se.id})">
+                                <div class="similar-card-img" style="${se.image_url && se.image_url.startsWith('http') ? `background-image:url('${se.image_url}');background-size:cover;` : ''}">
+                                    ${se.image_url && se.image_url.startsWith('http') ? '' : '🎯'}
+                                </div>
+                                <div class="similar-card-title">${se.title}</div>
+                                <div class="similar-card-timer" data-closes-at="${se.closes_at}">${fmtCountdown(se.closes_at)}</div>
+                            </div>
+                        `).join('')}
+                    </div>
+                </div>` : ''}
+
+                <div class="comments-section">
+                    <h3 class="section-title">💬 Комментарии</h3>
+                    <div class="comments-list" id="comments-list-${event.id}">
+                        <div class="comments-loading">Загружаем...</div>
+                    </div>
+                    <div class="comment-form">
+                        <textarea id="comment-input" class="comment-textarea" placeholder="Ваш комментарий (только для участников ставки)..." maxlength="500" rows="2"></textarea>
+                        <button class="comment-submit-btn" onclick="submitComment(${event.id})">Отправить</button>
+                    </div>
+                </div>
             </div>
         `;
 
@@ -727,10 +785,57 @@ async function openEventDetail(eventId) {
 
         state.selectedEvent = event;
 
+        // Загружаем комментарии
+        loadComments(event.id);
+
     } catch (e) {
         renderError(e.message);
     }
 }
+
+async function loadComments(eventId) {
+    const list = document.getElementById(`comments-list-${eventId}`);
+    if (!list) return;
+    try {
+        const comments = await api.comments(eventId);
+        if (!comments.length) {
+            list.innerHTML = '<div class="comments-empty">Пока нет комментариев. Сделайте ставку и оставьте первый!</div>';
+            return;
+        }
+        list.innerHTML = comments.map(c => `
+            <div class="comment-item">
+                <div class="comment-avatar">${(c.username || '?')[0].toUpperCase()}</div>
+                <div class="comment-body">
+                    <div class="comment-header">
+                        <span class="comment-username">@${c.username || 'Аноним'}</span>
+                        <span class="comment-time">${new Date(c.created_at).toLocaleDateString('ru-RU', {day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'})}</span>
+                    </div>
+                    <div class="comment-text">${c.text.replace(/</g,'&lt;').replace(/>/g,'&gt;')}</div>
+                </div>
+            </div>
+        `).join('');
+    } catch (e) {
+        list.innerHTML = '<div class="comments-empty">Не удалось загрузить комментарии</div>';
+    }
+}
+
+window.submitComment = async function(eventId) {
+    const input = document.getElementById('comment-input');
+    const text = input?.value?.trim();
+    if (!text) return;
+    try {
+        const comment = await api.postComment(eventId, text);
+        input.value = '';
+        toast('Комментарий добавлен', 'success');
+        loadComments(eventId);
+    } catch (e) {
+        if (e.status === 403) {
+            toast('Только участники могут комментировать', 'error');
+        } else {
+            toast('Ошибка: ' + (e.message || 'попробуйте снова'), 'error');
+        }
+    }
+};
 
 function goBack() {
     // Возвращаемся к предыдущему табу
@@ -790,6 +895,13 @@ document.addEventListener('DOMContentLoaded', () => {
             filtered.forEach(e => feed.appendChild(buildEventCard(e)));
         }
     });
+
+    // Живые таймеры — один глобальный интервал на всё приложение
+    setInterval(() => {
+        document.querySelectorAll('[data-closes-at]').forEach(el => {
+            el.textContent = fmtCountdown(el.dataset.closesAt);
+        });
+    }, 1000);
 
     loadInitial();
 });
