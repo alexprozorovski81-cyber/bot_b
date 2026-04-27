@@ -22,6 +22,7 @@ from bot.handlers import get_main_router
 from bot.handlers import admin
 from bot.services.oracle_service import check_oracles
 from bot.services.news_service import fetch_news_suggestions, fetch_cbr_rate
+from bot.services.auto_events_service import process_auto_events
 
 
 logging.basicConfig(
@@ -63,8 +64,8 @@ async def run_api() -> None:
 
 
 async def run_cron() -> None:
-    """Cron-задачи: оракулы каждые 5 мин, новости каждые 30 мин."""
-    logger.info("Cron task started (oracles every 5min, news every 30min)")
+    """Cron-задачи: оракулы каждые 5 мин, новости + авто-события каждые 30 мин."""
+    logger.info("Cron task started (oracles every 5min, news+auto-events every 30min)")
     await asyncio.sleep(15)  # Ждём пока бот запустится
 
     news_tick = 0
@@ -77,7 +78,7 @@ async def run_cron() -> None:
         except Exception as e:
             logger.exception(f"Cron oracle error: {e}")
 
-        # -- Новости (каждые 30 мин = 6 тиков по 5 мин) --
+        # -- Новости + авто-события (каждые 30 мин = 6 тиков по 5 мин) --
         news_tick += 1
         if news_tick >= 6:
             news_tick = 0
@@ -87,49 +88,60 @@ async def run_cron() -> None:
 
 
 async def _run_news_scan() -> None:
-    """Парсит новости и отправляет интересные админу."""
+    """Парсит новости: авто-создаёт события + отправляет остальные админу."""
     try:
         bot = notifier._bot
-        if not bot or not settings.admin_id_list:
+
+        # Получаем все новости (ignore_cache=False — дедупликация по хэшу)
+        suggestions = await fetch_news_suggestions()
+        if not suggestions:
             return
 
-        suggestions = await fetch_news_suggestions()
-        for item in suggestions:
-            from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, URLInputFile
-            caption = (
-                f"<b>📰 {item['source']}</b>\n\n"
-                f"<b>{item['title']}</b>\n\n"
-                f"Хочешь создать рынок прогнозов по этой теме?"
-            )
-            kb = InlineKeyboardMarkup(inline_keyboard=[[
-                InlineKeyboardButton(
-                    text="➕ Создать событие",
-                    callback_data=f"news:addevent:{item['hash']}",
-                ),
-            ]])
-            for admin_id in settings.admin_id_list:
-                try:
-                    if item.get("image_url"):
-                        # Отправляем фото со статьи с подписью
-                        await bot.send_photo(
-                            admin_id,
-                            photo=item["image_url"],
-                            caption=caption,
-                            parse_mode="HTML",
-                            reply_markup=kb,
-                        )
-                    else:
-                        # Фото не нашлось — отправляем текст
-                        await bot.send_message(
-                            admin_id,
-                            caption,
-                            parse_mode="HTML",
-                            reply_markup=kb,
-                        )
-                except Exception as e:
-                    logger.warning(f"News notify error for {admin_id}: {e}")
+        # ── 1. Авто-создание событий из релевантных новостей ──────────────
+        auto_created = await process_auto_events(suggestions)
+        if auto_created:
+            logger.info(f"Auto-events created: {auto_created}")
 
-        # Курс ЦБ РФ — отправляем если значительное изменение
+        # ── 2. Остальные новости — отправляем админу для ручного решения ──
+        if bot and settings.admin_id_list:
+            from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+            for item in suggestions:
+                caption = (
+                    f"<b>📰 {item['source']}</b>\n\n"
+                    f"<b>{item['title']}</b>\n\n"
+                    f"Хочешь создать рынок прогнозов по этой теме?"
+                )
+                kb = InlineKeyboardMarkup(inline_keyboard=[[
+                    InlineKeyboardButton(
+                        text="⚡ Быстро опубликовать",
+                        callback_data=f"news:quick:{item['hash']}",
+                    ),
+                    InlineKeyboardButton(
+                        text="✏️ Редактировать",
+                        callback_data=f"news:addevent:{item['hash']}",
+                    ),
+                ]])
+                for admin_id in settings.admin_id_list:
+                    try:
+                        if item.get("image_url"):
+                            await bot.send_photo(
+                                admin_id,
+                                photo=item["image_url"],
+                                caption=caption,
+                                parse_mode="HTML",
+                                reply_markup=kb,
+                            )
+                        else:
+                            await bot.send_message(
+                                admin_id,
+                                caption,
+                                parse_mode="HTML",
+                                reply_markup=kb,
+                            )
+                    except Exception as e:
+                        logger.warning(f"News notify error for {admin_id}: {e}")
+
+        # Курс ЦБ РФ — логируем
         rate = await fetch_cbr_rate()
         if rate:
             logger.info(f"CBR USD/RUB: {rate}")

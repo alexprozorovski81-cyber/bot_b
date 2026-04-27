@@ -61,5 +61,13 @@ class Settings(BaseSettings):
     min_withdraw_coins: Decimal = Decimal("100")  # минимальная сумма вывода
     support_username: str = "support"
 
+    # Claude API (для авто-генерации вопросов из новостей)
+    anthropic_api_key: str = ""
+
+    # Авто-события из новостей
+    auto_events_enabled: bool = True      # включить автопубликацию
+    auto_events_per_run: int = 2          # макс. событий за один cron-тик
+    auto_events_min_interval_h: int = 2   # минимум часов между дублями из одной темы
+
 
 settings = Settings()  # type: ignore[call-arg]
