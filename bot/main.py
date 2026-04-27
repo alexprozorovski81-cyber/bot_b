@@ -160,9 +160,21 @@ async def init_database() -> None:
                 "стираться при рестарте! Установи DATABASE_URL=sqlite+aiosqlite:////data/predictbet.db"
             )
 
-    # Создаём таблицы
+    # Создаём таблицы (новые) и применяем inline-миграции для существующих
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+
+        # Inline-миграции: добавляем колонки если их нет (SQLite не имеет IF NOT EXISTS)
+        migrations = [
+            "ALTER TABLE events ADD COLUMN article_url VARCHAR(512)",
+        ]
+        for sql in migrations:
+            try:
+                await conn.execute(text(sql))
+                logger.info(f"Migration applied: {sql}")
+            except Exception:
+                pass  # Колонка уже существует — ок
+
     logger.info("Database schema ready")
 
     # Заполняем данными только если БД пустая
