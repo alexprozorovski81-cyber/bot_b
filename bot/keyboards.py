@@ -35,9 +35,13 @@ def main_menu_kb() -> ReplyKeyboardMarkup:
 
 
 def deposit_methods_kb() -> InlineKeyboardMarkup:
-    """Выбор способа пополнения — только USDT/TON."""
+    """Выбор способа пополнения."""
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="💎 USDT (TON)", callback_data="dep:usdt")],
+        [InlineKeyboardButton(text="⭐ Telegram Stars", callback_data="dep:stars")],
+        [InlineKeyboardButton(text="🔷 ETH", callback_data="dep:crypto:eth"),
+         InlineKeyboardButton(text="₿ BTC", callback_data="dep:crypto:btc"),
+         InlineKeyboardButton(text="◎ SOL", callback_data="dep:crypto:sol")],
         [InlineKeyboardButton(text=texts.BTN_BACK, callback_data="main:menu")],
     ])
 

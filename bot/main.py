@@ -167,6 +167,38 @@ async def init_database() -> None:
         # Inline-миграции: добавляем колонки если их нет (SQLite не имеет IF NOT EXISTS)
         migrations = [
             "ALTER TABLE events ADD COLUMN article_url VARCHAR(512)",
+            # Withdrawals table — создаётся через create_all, но на случай старых БД
+            """CREATE TABLE IF NOT EXISTS withdrawals (
+                id INTEGER PRIMARY KEY,
+                user_id INTEGER NOT NULL REFERENCES users(id),
+                amount_coins NUMERIC(18,2) NOT NULL,
+                network VARCHAR(32) NOT NULL,
+                wallet_address VARCHAR(256) NOT NULL,
+                status VARCHAR(16) NOT NULL DEFAULT 'pending',
+                admin_note VARCHAR(512),
+                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                processed_at DATETIME
+            )""",
+            "CREATE INDEX IF NOT EXISTS ix_withdrawals_user_id ON withdrawals (user_id)",
+            "CREATE INDEX IF NOT EXISTS ix_withdrawals_status ON withdrawals (status)",
+            # Achievements
+            """CREATE TABLE IF NOT EXISTS achievements (
+                id INTEGER PRIMARY KEY,
+                slug VARCHAR(64) UNIQUE NOT NULL,
+                name VARCHAR(128) NOT NULL,
+                emoji VARCHAR(8) NOT NULL,
+                description VARCHAR(256) NOT NULL,
+                condition_type VARCHAR(32) NOT NULL,
+                condition_value INTEGER NOT NULL DEFAULT 1,
+                rarity VARCHAR(16) NOT NULL DEFAULT 'common'
+            )""",
+            """CREATE TABLE IF NOT EXISTS user_achievements (
+                id INTEGER PRIMARY KEY,
+                user_id INTEGER NOT NULL REFERENCES users(id),
+                achievement_id INTEGER NOT NULL REFERENCES achievements(id),
+                unlocked_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )""",
+            "CREATE INDEX IF NOT EXISTS ix_user_achievements_user_id ON user_achievements (user_id)",
         ]
         for sql in migrations:
             try:

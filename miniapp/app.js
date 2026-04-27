@@ -490,13 +490,24 @@ async function loadProfile() {
     const feed = document.getElementById('events-feed');
     feed.innerHTML = '<div class="loading"><div class="spinner"></div></div>';
     try {
-        const me = await api.me();
+        const [me, achievements] = await Promise.all([api.me(), api.achievements()]);
         state.me = me;
         renderBalance();
 
         const profitColor = me.stats.profit >= 0 ? 'var(--yes)' : 'var(--no)';
         const profitSign  = me.stats.profit >= 0 ? '+' : '';
         const avatar = (me.first_name || 'P')[0].toUpperCase();
+
+        const earnedCount = achievements.filter(a => a.earned).length;
+        const achievHtml = achievements.map(a => {
+            const rarityClass = `ach-${a.rarity}`;
+            const title = a.earned
+                ? `${a.name}\n${a.description}\n${new Date(a.unlocked_at).toLocaleDateString('ru-RU')}`
+                : `${a.name}\n${a.description}\n(не получено)`;
+            return `<div class="ach-badge ${rarityClass} ${a.earned ? 'earned' : 'locked'}" title="${title}">
+                <span class="ach-emoji">${a.emoji}</span>
+            </div>`;
+        }).join('');
 
         feed.innerHTML = `
             <div class="event-card" style="margin-bottom:12px">
@@ -538,23 +549,131 @@ async function loadProfile() {
                 </div>
             </div>
 
-            <button class="deposit-btn-large" onclick="openDepositModal()">
-                💎 Пополнить через USDT (TON)
-            </button>
+            <div class="profile-action-row">
+                <button class="profile-action-btn deposit" onclick="openDepositModal()">
+                    💎 Пополнить
+                </button>
+                <button class="profile-action-btn withdraw" onclick="openWithdrawModal()">
+                    💸 Вывести
+                </button>
+                <button class="profile-action-btn howto" onclick="openHowItWorks()">
+                    ❓ Как работает
+                </button>
+            </div>
 
-            <div style="background:var(--bg-card);border:1px solid var(--border);border-radius:14px;padding:14px 16px">
-                <div class="section-title" style="margin-bottom:10px">О платформе</div>
-                <div style="font-size:13px;color:var(--text-muted);line-height:1.7">
-                    PredictBet — рынок прогнозов на базе LMSR.<br>
-                    Ставь на реальные события, зарабатывай если прав.<br>
-                    <span style="color:var(--text-faint);font-size:12px">Минимальная ставка: 10 ₽</span>
-                </div>
+            <div class="achievements-section">
+                <div class="section-title">🏅 Ачивки <span class="ach-count">${earnedCount}/${achievements.length}</span></div>
+                <div class="ach-grid">${achievHtml}</div>
             </div>
         `;
     } catch (e) {
         renderError(e.message);
     }
 }
+
+// ═══════════════════════════════════════
+// Модалка вывода
+// ═══════════════════════════════════════
+window.openWithdrawModal = function() {
+    const modal = document.getElementById('withdraw-modal');
+    if (!modal) return;
+    document.getElementById('withdraw-amount').value = '';
+    document.getElementById('withdraw-wallet').value = '';
+    document.getElementById('withdraw-network').value = 'usdt_ton';
+    const err = modal.querySelector('.withdraw-error');
+    if (err) err.textContent = '';
+    modal.hidden = false;
+};
+
+window.closeWithdrawModal = function() {
+    const modal = document.getElementById('withdraw-modal');
+    if (modal) modal.hidden = true;
+};
+
+window.submitWithdraw = async function() {
+    const amount = parseFloat(document.getElementById('withdraw-amount').value);
+    const network = document.getElementById('withdraw-network').value;
+    const wallet = document.getElementById('withdraw-wallet').value.trim();
+    const errEl = document.querySelector('#withdraw-modal .withdraw-error');
+    const btn = document.getElementById('withdraw-submit-btn');
+
+    if (!amount || amount < 100) { errEl.textContent = 'Минимум 100 монет'; return; }
+    if (!wallet) { errEl.textContent = 'Введи адрес кошелька'; return; }
+    if (state.me && amount > state.me.balance_rub) { errEl.textContent = 'Недостаточно монет'; return; }
+
+    btn.disabled = true;
+    btn.textContent = 'Отправляем...';
+    errEl.textContent = '';
+
+    try {
+        const result = await api.withdrawRequest(amount, network, wallet);
+        state.me.balance_rub = result.new_balance;
+        renderBalance();
+        closeWithdrawModal();
+        toast(`✅ Заявка #${result.id} создана. Ожидай подтверждения.`, 'success');
+    } catch (e) {
+        errEl.textContent = e.message || 'Ошибка. Попробуй снова.';
+    } finally {
+        btn.disabled = false;
+        btn.textContent = 'Отправить заявку';
+    }
+};
+
+// ═══════════════════════════════════════
+// Страница «Как работает»
+// ═══════════════════════════════════════
+window.openHowItWorks = function() {
+    const feed = document.getElementById('events-feed');
+    feed.innerHTML = `
+        <button class="back-btn" onclick="loadProfile()">← Назад</button>
+        <div class="howto-page">
+            <h2 class="howto-title">Как работает PredictBet</h2>
+
+            <div class="howto-block">
+                <div class="howto-block-title">🪙 Что такое монеты</div>
+                <p>Монеты — игровая валюта PredictBet. <b>1 ₽ = 1 монета.</b></p>
+                <p>Пополняй баланс через USDT (TON), Telegram Stars или крипту (ETH/BTC/SOL). Выводи выигрыш в крипту на свой кошелёк.</p>
+            </div>
+
+            <div class="howto-block">
+                <div class="howto-block-title">📐 Как считается выигрыш (LMSR)</div>
+                <p>Система использует <b>LMSR</b> — математическую модель рынка предсказаний, как на Polymarket.</p>
+                <ul class="howto-list">
+                    <li>Каждая выигравшая акция = <b>1 монета</b></li>
+                    <li>Коэффициент зависит от спроса: чем больше ставок «Да» — тем ниже коэф «Да» и выше «Нет»</li>
+                    <li>Срок события <b>не влияет</b> на расчёт — ставишь по текущему рынку</li>
+                </ul>
+
+                <div class="howto-example">
+                    <div class="howto-example-title">Пример</div>
+                    <p>Событие: «Победит ли сборная на ЧМ?»</p>
+                    <p>Рынок даёт <b>35% вероятности</b> → коэф <b>×2.86</b></p>
+                    <p>Ставишь <b>500 монет</b> → при победе получаешь <b>~1 400 монет</b> (×2.86, минус 2% комиссии)</p>
+                    <p style="color:var(--no)">При проигрыше теряешь 500 монет</p>
+                </div>
+            </div>
+
+            <div class="howto-block">
+                <div class="howto-block-title">💸 Пополнение и вывод</div>
+                <ul class="howto-list">
+                    <li><b>USDT (TON)</b> — отправь на наш кошелёк, укажи memo = ID платежа</li>
+                    <li><b>Telegram Stars</b> — купи Stars в Telegram, обменяй на монеты</li>
+                    <li><b>ETH / BTC / SOL</b> — через платёжный шлюз NOWPayments</li>
+                    <li><b>Вывод</b> — создай заявку, укажи кошелёк. Выплата в течение 24 часов после ручного одобрения.</li>
+                </ul>
+            </div>
+
+            <div class="howto-block">
+                <div class="howto-block-title">🔒 Безопасность</div>
+                <ul class="howto-list">
+                    <li>Все балансы хранятся в БД с полным аудитом каждой транзакции</li>
+                    <li>Вывод только на указанный тобой кошелёк после ручной проверки</li>
+                    <li>Платформа берёт <b>2% комиссии</b> только с прибыли</li>
+                </ul>
+            </div>
+        </div>
+    `;
+};
 
 // ═══════════════════════════════════════
 // Детальная страница события

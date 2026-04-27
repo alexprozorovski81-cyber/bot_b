@@ -155,4 +155,12 @@ async def place_bet(
 
     await session.commit()
     await session.refresh(bet)
+
+    # Проверяем и выдаём ачивки (fire-and-forget)
+    try:
+        from bot.services.achievement_service import check_and_award
+        await check_and_award(user.id, session)
+    except Exception:
+        pass
+
     return bet

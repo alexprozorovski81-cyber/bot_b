@@ -42,6 +42,27 @@ class PaymentMethod(str, PyEnum):
     YOOKASSA_CARD = "yookassa_card"
     YOOKASSA_SBP = "yookassa_sbp"
     USDT_TON = "usdt_ton"
+    STARS = "stars"
+    ETH = "eth"
+    BTC = "btc"
+    SOL = "sol"
+
+
+class WithdrawStatus(str, PyEnum):
+    PENDING = "pending"
+    APPROVED = "approved"
+    REJECTED = "rejected"
+    PAID = "paid"
+
+
+class AchievementCondition(str, PyEnum):
+    FIRST_BET      = "first_bet"
+    BETS_COUNT     = "bets_count"
+    WIN_COUNT      = "win_count"
+    VOLUME_TOTAL   = "volume_total"
+    DEPOSIT_FIRST  = "deposit_first"
+    PERFECT_STREAK = "perfect_streak"
+    COMMENT_FIRST  = "comment_first"
 
 
 class User(Base):
@@ -240,6 +261,56 @@ class Payment(Base):
         DateTime(timezone=True), default=datetime.utcnow
     )
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class WithdrawalRequest(Base):
+    """Заявка на вывод выигрыша пользователем."""
+    __tablename__ = "withdrawals"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    amount_coins: Mapped[Decimal] = mapped_column(Numeric(18, 2))
+    network: Mapped[str] = mapped_column(String(32))
+    wallet_address: Mapped[str] = mapped_column(String(256))
+    status: Mapped[WithdrawStatus] = mapped_column(
+        Enum(WithdrawStatus), default=WithdrawStatus.PENDING, index=True
+    )
+    admin_note: Mapped[str | None] = mapped_column(String(512))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=datetime.utcnow, index=True
+    )
+    processed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    user: Mapped["User"] = relationship()
+
+
+class Achievement(Base):
+    """Ачивка — достижение на платформе."""
+    __tablename__ = "achievements"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    slug: Mapped[str] = mapped_column(String(64), unique=True)
+    name: Mapped[str] = mapped_column(String(128))
+    emoji: Mapped[str] = mapped_column(String(8))
+    description: Mapped[str] = mapped_column(String(256))
+    condition_type: Mapped[AchievementCondition] = mapped_column(Enum(AchievementCondition))
+    condition_value: Mapped[int] = mapped_column(default=1)
+    rarity: Mapped[str] = mapped_column(String(16), default="common")
+
+
+class UserAchievement(Base):
+    """Связь пользователь ↔ полученная ачивка."""
+    __tablename__ = "user_achievements"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    achievement_id: Mapped[int] = mapped_column(ForeignKey("achievements.id"), index=True)
+    unlocked_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=datetime.utcnow
+    )
+
+    achievement: Mapped["Achievement"] = relationship()
+    user: Mapped["User"] = relationship()
 
 
 class Comment(Base):

@@ -12,7 +12,7 @@ from decimal import Decimal
 from sqlalchemy import select
 
 from db.database import AsyncSessionLocal
-from db.models import Category, Event, EventStatus, Outcome
+from db.models import Achievement, AchievementCondition, Category, Event, EventStatus, Outcome
 
 
 CATEGORIES = [
@@ -319,6 +319,100 @@ def _events_data(now: datetime) -> list[dict]:
     ]
 
 
+ACHIEVEMENTS = [
+    {
+        "slug": "first_bet",
+        "name": "Первая ставка",
+        "emoji": "🎯",
+        "description": "Сделай первую ставку на платформе",
+        "condition_type": AchievementCondition.FIRST_BET,
+        "condition_value": 1,
+        "rarity": "common",
+    },
+    {
+        "slug": "bets_10",
+        "name": "На разогреве",
+        "emoji": "🔥",
+        "description": "Сделай 10 ставок",
+        "condition_type": AchievementCondition.BETS_COUNT,
+        "condition_value": 10,
+        "rarity": "common",
+    },
+    {
+        "slug": "bets_50",
+        "name": "Активный игрок",
+        "emoji": "⚡",
+        "description": "Сделай 50 ставок",
+        "condition_type": AchievementCondition.BETS_COUNT,
+        "condition_value": 50,
+        "rarity": "rare",
+    },
+    {
+        "slug": "first_win",
+        "name": "Первая победа",
+        "emoji": "🏆",
+        "description": "Выиграй первую ставку",
+        "condition_type": AchievementCondition.WIN_COUNT,
+        "condition_value": 1,
+        "rarity": "common",
+    },
+    {
+        "slug": "wins_5",
+        "name": "Аналитик",
+        "emoji": "🧠",
+        "description": "Выиграй 5 ставок",
+        "condition_type": AchievementCondition.WIN_COUNT,
+        "condition_value": 5,
+        "rarity": "rare",
+    },
+    {
+        "slug": "volume_1000",
+        "name": "Инвестор",
+        "emoji": "💰",
+        "description": "Поставь суммарно 1 000 монет",
+        "condition_type": AchievementCondition.VOLUME_TOTAL,
+        "condition_value": 1000,
+        "rarity": "rare",
+    },
+    {
+        "slug": "volume_10000",
+        "name": "Кит",
+        "emoji": "💎",
+        "description": "Поставь суммарно 10 000 монет",
+        "condition_type": AchievementCondition.VOLUME_TOTAL,
+        "condition_value": 10000,
+        "rarity": "epic",
+    },
+    {
+        "slug": "first_deposit",
+        "name": "Первый депозит",
+        "emoji": "🚀",
+        "description": "Пополни баланс впервые",
+        "condition_type": AchievementCondition.DEPOSIT_FIRST,
+        "condition_value": 1,
+        "rarity": "common",
+    },
+    {
+        "slug": "first_comment",
+        "name": "Голос рынка",
+        "emoji": "💬",
+        "description": "Оставь первый комментарий",
+        "condition_type": AchievementCondition.COMMENT_FIRST,
+        "condition_value": 1,
+        "rarity": "common",
+    },
+    {
+        "slug": "streak_10",
+        "name": "Легенда",
+        "emoji": "👑",
+        "description": "Выиграй 10 ставок подряд",
+        "condition_type": AchievementCondition.PERFECT_STREAK,
+        "condition_value": 10,
+        "rarity": "legendary",
+    },
+]
+
+
 async def seed() -> None:
     async with AsyncSessionLocal() as session:
         # 1. Категории
@@ -377,6 +471,20 @@ async def seed() -> None:
 
         await session.commit()
         print(f"\nGotovo: sozdano={created}, propusheno={skipped}")
+
+        # 3. Ачивки
+        ach_created = 0
+        for ach_data in ACHIEVEMENTS:
+            existing = await session.execute(
+                select(Achievement).where(Achievement.slug == ach_data["slug"])
+            )
+            if existing.scalar_one_or_none():
+                continue
+            session.add(Achievement(**ach_data))
+            ach_created += 1
+            print(f"  + ачивка: {ach_data['emoji']} {ach_data['name']}")
+        await session.commit()
+        print(f"Ачивки: создано={ach_created}")
 
 
 if __name__ == "__main__":

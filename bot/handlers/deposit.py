@@ -2,10 +2,12 @@
 import logging
 from decimal import Decimal, InvalidOperation
 
-from aiogram import Router, F
+from aiogram import Router, F, Bot
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.types import Message, CallbackQuery
+from aiogram.types import (
+    Message, CallbackQuery, LabeledPrice, PreCheckoutQuery,
+)
 from sqlalchemy import select
 
 from bot import keyboards as kb
@@ -325,3 +327,122 @@ async def check_usdt(callback: CallbackQuery) -> None:
 async def deposit_cancel(callback: CallbackQuery) -> None:
     await callback.message.delete()
     await callback.answer()
+
+
+# ── Telegram Stars ────────────────────────────────────────────────────────────
+
+_STARS_OPTIONS = [100, 250, 500, 1000]
+
+
+@router.callback_query(F.data == "dep:stars")
+async def deposit_stars_menu(callback: CallbackQuery) -> None:
+    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+    rows = [[
+        InlineKeyboardButton(
+            text=f"⭐ {s} Stars → {s * settings.stars_coins_rate} монет",
+            callback_data=f"dep:stars:{s}",
+        )
+    ] for s in _STARS_OPTIONS]
+    rows.append([InlineKeyboardButton(text="← Назад", callback_data="dep:back_methods")])
+    await callback.message.edit_text(
+        "<b>⭐ Пополнение через Telegram Stars</b>\n\n"
+        f"1 Star = {settings.stars_coins_rate} монет\n\n"
+        "Выбери количество Stars:",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=rows),
+        parse_mode="HTML",
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("dep:stars:"))
+async def deposit_stars_invoice(callback: CallbackQuery, bot: Bot) -> None:
+    stars = int(callback.data.split(":")[2])
+    coins = stars * settings.stars_coins_rate
+    await bot.send_invoice(
+        chat_id=callback.from_user.id,
+        title=f"Пополнение {coins} монет",
+        description=f"{stars} Telegram Stars → {coins} монет на платформе PredictBet",
+        payload=f"stars:{stars}:{callback.from_user.id}",
+        currency="XTR",
+        prices=[LabeledPrice(label=f"{coins} монет", amount=stars)],
+    )
+    await callback.answer()
+
+
+@router.pre_checkout_query()
+async def pre_checkout(query: PreCheckoutQuery) -> None:
+    await query.answer(ok=True)
+
+
+@router.message(F.successful_payment)
+async def stars_payment_success(message: Message) -> None:
+    sp = message.successful_payment
+    stars = sp.total_amount
+    coins = Decimal(stars * settings.stars_coins_rate)
+
+    async with AsyncSessionLocal() as session:
+        user, _ = await get_or_create_user(
+            session, message.from_user.id,
+            message.from_user.username,
+            message.from_user.first_name,
+        )
+
+        payment = Payment(
+            user_id=user.id,
+            method=PaymentMethod.STARS,
+            amount_rub=coins,
+            status="succeeded",
+            is_deposit=True,
+            external_id=sp.telegram_payment_charge_id,
+        )
+        session.add(payment)
+        await session.flush()
+
+        balance_before = user.balance_rub
+        user.balance_rub += coins
+
+        session.add(Transaction(
+            user_id=user.id,
+            type=TransactionType.DEPOSIT,
+            amount_rub=coins,
+            balance_before=balance_before,
+            balance_after=user.balance_rub,
+            payment_id=payment.id,
+            description=f"Telegram Stars ({stars}⭐)",
+        ))
+        await session.commit()
+
+        await message.answer(
+            f"✅ <b>Пополнение через Stars прошло!</b>\n\n"
+            f"⭐ {stars} Stars → <b>{coins:.0f} монет</b>\n"
+            f"💰 Баланс: <b>{user.balance_rub:,.0f} монет</b>",
+            parse_mode="HTML",
+        )
+        logger.info("Stars deposit: user=%s stars=%s coins=%s", user.id, stars, coins)
+
+
+@router.callback_query(F.data.startswith("dep:crypto:"))
+async def deposit_crypto(callback: CallbackQuery) -> None:
+    """Крипто-депозит через NOWPayments — только через Mini App."""
+    currency = callback.data.split(":")[2].upper()
+    await callback.answer(
+        f"Для пополнения {currency} открой мини-апп и нажми «Пополнить».",
+        show_alert=True,
+    )
+
+
+@router.callback_query(F.data == "dep:back_methods")
+async def deposit_back_to_methods(callback: CallbackQuery) -> None:
+    await callback.message.edit_text(
+        texts.DEPOSIT_MENU.format(
+            balance="—", min_rub=f"{settings.min_deposit_rub:.0f}",
+            min_usdt=f"{settings.min_deposit_usdt:.0f}",
+        ),
+        reply_markup=kb.deposit_methods_kb(),
+        parse_mode="HTML",
+    )
+    await callback.answer()
+
+
+# ── NOWPayments крипта (ETH/BTC/SOL) — только через Mini App API ─────────────
+# Обработка вебхука в bot/handlers/webhooks.py

@@ -39,6 +39,15 @@ class Settings(BaseSettings):
     ton_api_key: str = ""
     usdt_wallet_address: str = ""
     usdt_jetton_master: str = ""
+    usdt_to_rub_rate: Decimal = Decimal("95.00")  # единый курс для всего приложения
+
+    # NOWPayments (ETH/BTC/SOL)
+    nowpayments_api_key: str = ""
+    nowpayments_ipn_secret: str = ""  # для HMAC-верификации webhook
+    nowpayments_usd_to_rub: Decimal = Decimal("92.00")  # курс USD→монеты
+
+    # Telegram Stars
+    stars_coins_rate: int = 2  # сколько монет за 1 Star (1 Star ≈ $0.013 ≈ 1.2₽, даём 2 монеты)
 
     # Разработка
     dev_mode: bool = False
@@ -49,6 +58,7 @@ class Settings(BaseSettings):
     initial_liquidity: Decimal = Decimal("1000")
     min_deposit_rub: Decimal = Decimal("100")
     min_deposit_usdt: Decimal = Decimal("1")
+    min_withdraw_coins: Decimal = Decimal("100")  # минимальная сумма вывода
     support_username: str = "support"
 
 

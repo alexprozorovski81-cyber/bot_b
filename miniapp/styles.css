@@ -1317,3 +1317,176 @@ body {
     transition: opacity .2s;
 }
 .comment-submit-btn:hover { opacity: 0.85; }
+
+/* ═══════════════════════════════════════
+   ПРОФИЛЬ — кнопки действий
+═══════════════════════════════════════ */
+.profile-action-row {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 8px;
+    margin-bottom: 16px;
+}
+.profile-action-btn {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    color: var(--text);
+    font-size: 12px;
+    font-weight: 600;
+    font-family: inherit;
+    padding: 12px 8px;
+    cursor: pointer;
+    transition: background .2s, border-color .2s;
+    text-align: center;
+    line-height: 1.3;
+}
+.profile-action-btn:hover { background: var(--bg-hover); border-color: var(--border-strong); }
+.profile-action-btn.deposit { border-color: rgba(99,102,241,0.4); }
+.profile-action-btn.withdraw { border-color: rgba(16,217,130,0.3); }
+.profile-action-btn.howto  { border-color: rgba(245,158,11,0.3); }
+
+/* ═══════════════════════════════════════
+   АЧИВКИ
+═══════════════════════════════════════ */
+.achievements-section {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 14px 16px;
+    margin-bottom: 12px;
+}
+.ach-count {
+    font-size: 12px;
+    color: var(--text-muted);
+    font-weight: 500;
+    margin-left: 6px;
+}
+.ach-grid {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 10px;
+    margin-top: 12px;
+}
+.ach-badge {
+    aspect-ratio: 1;
+    border-radius: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 22px;
+    border: 1px solid var(--border);
+    cursor: default;
+    transition: transform .15s;
+    position: relative;
+}
+.ach-badge:hover { transform: scale(1.12); }
+.ach-badge.locked { opacity: 0.3; filter: grayscale(1); }
+.ach-badge.earned { opacity: 1; filter: none; }
+
+.ach-common   { background: rgba(99,102,241,0.12); border-color: rgba(99,102,241,0.25); }
+.ach-rare     { background: rgba(16,217,130,0.1);  border-color: rgba(16,217,130,0.3); }
+.ach-epic     { background: rgba(168,85,247,0.12); border-color: rgba(168,85,247,0.35); }
+.ach-legendary{ background: rgba(245,158,11,0.12); border-color: rgba(245,158,11,0.4);
+                box-shadow: 0 0 12px rgba(245,158,11,0.2); }
+
+.ach-badge.earned.ach-common   { box-shadow: 0 0 8px rgba(99,102,241,0.25); }
+.ach-badge.earned.ach-rare     { box-shadow: 0 0 8px rgba(16,217,130,0.25); }
+.ach-badge.earned.ach-epic     { box-shadow: 0 0 10px rgba(168,85,247,0.3); }
+
+/* ═══════════════════════════════════════
+   МОДАЛКА ВЫВОДА
+═══════════════════════════════════════ */
+.withdraw-select, .withdraw-input {
+    width: 100%;
+    background: var(--bg-elevated);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    color: var(--text);
+    font-size: 14px;
+    font-family: inherit;
+    padding: 10px 12px;
+    transition: border-color .2s;
+    appearance: none;
+    -webkit-appearance: none;
+}
+.withdraw-select:focus, .withdraw-input:focus {
+    outline: none;
+    border-color: var(--accent);
+}
+.withdraw-select option { background: var(--bg-card); }
+.withdraw-input::placeholder { color: var(--text-faint); }
+
+/* ═══════════════════════════════════════
+   СТРАНИЦА «КАК РАБОТАЕТ»
+═══════════════════════════════════════ */
+.howto-page { padding: 4px 0 24px; }
+.howto-title {
+    font-size: 20px;
+    font-weight: 800;
+    margin-bottom: 16px;
+    background: linear-gradient(135deg, #6366f1, #a855f7);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+}
+.howto-block {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 16px;
+    margin-bottom: 12px;
+}
+.howto-block-title {
+    font-size: 15px;
+    font-weight: 700;
+    margin-bottom: 10px;
+    color: var(--text);
+}
+.howto-block p {
+    font-size: 13px;
+    color: var(--text-muted);
+    line-height: 1.6;
+    margin-bottom: 8px;
+}
+.howto-block p:last-child { margin-bottom: 0; }
+.howto-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+}
+.howto-list li {
+    font-size: 13px;
+    color: var(--text-muted);
+    line-height: 1.6;
+    padding: 4px 0;
+    padding-left: 16px;
+    position: relative;
+}
+.howto-list li::before {
+    content: '→';
+    position: absolute;
+    left: 0;
+    color: var(--accent);
+    font-size: 12px;
+}
+.howto-example {
+    background: var(--bg-elevated);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 12px 14px;
+    margin-top: 10px;
+}
+.howto-example-title {
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--accent);
+    text-transform: uppercase;
+    letter-spacing: .5px;
+    margin-bottom: 8px;
+}
+.howto-example p {
+    font-size: 13px;
+    color: var(--text-muted);
+    margin-bottom: 4px;
+}

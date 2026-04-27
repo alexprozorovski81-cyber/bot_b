@@ -189,6 +189,47 @@
         </div>
     </div>
 
+    <!-- Модалка вывода -->
+    <div class="bet-modal" id="withdraw-modal" hidden>
+        <div class="bet-modal-backdrop" onclick="closeWithdrawModal()"></div>
+        <div class="bet-modal-content">
+            <button class="bet-modal-close" onclick="closeWithdrawModal()">&times;</button>
+            <div style="font-size:17px;font-weight:700;margin-bottom:4px">💸 Вывод монет</div>
+            <div style="font-size:13px;color:var(--text-muted);margin-bottom:16px">
+                Минимум 100 монет · Обработка до 24 часов
+            </div>
+
+            <div style="margin-bottom:12px">
+                <label style="font-size:13px;color:var(--text-muted);display:block;margin-bottom:6px">Сумма (монет)</label>
+                <div class="amount-input-wrap">
+                    <input type="number" id="withdraw-amount" placeholder="0" min="100" step="100" style="font-size:22px">
+                    <span class="amount-currency">монет</span>
+                </div>
+            </div>
+
+            <div style="margin-bottom:12px">
+                <label style="font-size:13px;color:var(--text-muted);display:block;margin-bottom:6px">Сеть</label>
+                <select id="withdraw-network" class="withdraw-select">
+                    <option value="usdt_ton">USDT (TON)</option>
+                    <option value="eth">Ethereum (ETH)</option>
+                    <option value="btc">Bitcoin (BTC)</option>
+                    <option value="sol">Solana (SOL)</option>
+                </select>
+            </div>
+
+            <div style="margin-bottom:16px">
+                <label style="font-size:13px;color:var(--text-muted);display:block;margin-bottom:6px">Адрес кошелька</label>
+                <input type="text" id="withdraw-wallet" placeholder="Вставь адрес кошелька" class="withdraw-input">
+            </div>
+
+            <div class="withdraw-error" style="color:var(--no);font-size:13px;min-height:18px;margin-bottom:10px"></div>
+
+            <button class="bet-confirm-btn" id="withdraw-submit-btn" onclick="submitWithdraw()">
+                Отправить заявку
+            </button>
+        </div>
+    </div>
+
     <script src="api.js"></script>
     <script src="ton.js"></script>
     <script src="app.js"></script>

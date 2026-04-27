@@ -19,8 +19,8 @@ from db.models import Payment, PaymentMethod, Transaction, TransactionType, User
 logger = logging.getLogger(__name__)
 
 
-# Курс USDT → RUB. В проде берём из API биржи.
-USDT_TO_RUB_RATE = Decimal("95.00")
+# Курс USDT → RUB — берётся из конфига (USDT_TO_RUB_RATE в .env)
+USDT_TO_RUB_RATE = settings.usdt_to_rub_rate
 
 
 def _setup_yookassa() -> None:
@@ -254,3 +254,123 @@ async def check_usdt_toncenter(
         return True
 
     return False
+
+
+# ── NOWPayments (ETH / BTC / SOL) ────────────────────────────────────────────
+
+_NOWPAYMENTS_BASE = "https://api.nowpayments.io/v1"
+
+
+async def create_nowpayments_invoice(
+    session: AsyncSession,
+    user: User,
+    amount_usd: Decimal,
+    currency: str,
+) -> tuple["Payment", str]:
+    """
+    Создаёт инвойс NOWPayments для приёма ETH/BTC/SOL.
+    Возвращает (Payment DB-запись, payment_url для редиректа пользователя).
+    """
+    if not settings.nowpayments_api_key:
+        raise ValueError("NOWPAYMENTS_API_KEY не настроен")
+
+    amount_coins = (amount_usd * settings.nowpayments_usd_to_rub).quantize(Decimal("0.01"))
+
+    method_map = {"eth": PaymentMethod.ETH, "btc": PaymentMethod.BTC, "sol": PaymentMethod.SOL}
+    pay_method = method_map.get(currency.lower(), PaymentMethod.ETH)
+
+    payment = Payment(
+        user_id=user.id,
+        method=pay_method,
+        amount_rub=amount_coins,
+        status="pending",
+        is_deposit=True,
+    )
+    session.add(payment)
+    await session.flush()
+
+    payload = {
+        "price_amount": float(amount_usd),
+        "price_currency": "usd",
+        "pay_currency": currency.lower(),
+        "order_id": str(payment.id),
+        "order_description": f"PredictBet deposit #{payment.id}",
+    }
+
+    async with httpx.AsyncClient(timeout=15) as client:
+        resp = await client.post(
+            f"{_NOWPAYMENTS_BASE}/invoice",
+            json=payload,
+            headers={"x-api-key": settings.nowpayments_api_key},
+        )
+        resp.raise_for_status()
+        data = resp.json()
+
+    invoice_url = data.get("invoice_url", "")
+    payment.external_id = str(data.get("id", ""))
+    await session.commit()
+
+    logger.info("NOWPayments invoice: payment_id=%s url=%s", payment.id, invoice_url)
+    return payment, invoice_url
+
+
+async def verify_nowpayments_webhook(payload_bytes: bytes, signature: str) -> bool:
+    """Верифицирует IPN-подпись NOWPayments (HMAC-SHA512)."""
+    import hmac as _hmac
+    import hashlib
+    secret = settings.nowpayments_ipn_secret.encode()
+    if not secret:
+        return True
+    expected = _hmac.new(secret, payload_bytes, hashlib.sha512).hexdigest()
+    return _hmac.compare_digest(expected, signature or "")
+
+
+async def credit_nowpayments_payment(session: AsyncSession, order_id: str, tx_hash: str) -> bool:
+    """Зачисляет монеты по order_id из IPN-вебхука. Идемпотентен."""
+    payment_result = await session.execute(
+        select(Payment).where(Payment.id == int(order_id))
+    )
+    payment = payment_result.scalar_one_or_none()
+    if not payment or payment.status == "succeeded":
+        return False
+
+    user_result = await session.execute(select(User).where(User.id == payment.user_id))
+    user = user_result.scalar_one_or_none()
+    if not user:
+        return False
+
+    balance_before = user.balance_rub
+    user.balance_rub += payment.amount_rub
+    payment.status = "succeeded"
+    if tx_hash:
+        payment.external_id = tx_hash
+
+    from datetime import datetime, timezone
+    payment.completed_at = datetime.now(timezone.utc)
+
+    session.add(Transaction(
+        user_id=user.id,
+        type=TransactionType.DEPOSIT,
+        amount_rub=payment.amount_rub,
+        balance_before=balance_before,
+        balance_after=user.balance_rub,
+        payment_id=payment.id,
+        description=f"Crypto deposit ({payment.method.value})",
+    ))
+    await session.commit()
+
+    try:
+        from bot.main import bot as tg_bot
+        await tg_bot.send_message(
+            user.telegram_id,
+            f"✅ Крипто-пополнение подтверждено!\n"
+            f"Зачислено: *{payment.amount_rub:,.0f} монет*\n"
+            f"Новый баланс: *{user.balance_rub:,.0f} монет*",
+            parse_mode="Markdown",
+        )
+    except Exception as e:
+        logger.warning("Failed to notify user after crypto deposit: %s", e)
+
+    logger.info("NOWPayments credited: order=%s user=%s amount=%s",
+                order_id, user.id, payment.amount_rub)
+    return True

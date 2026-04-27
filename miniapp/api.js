@@ -56,4 +56,16 @@ const api = {
             method: 'POST',
             body: JSON.stringify({ text }),
         }),
+    cryptoDepositInit: (currency, amount_usd) =>
+        apiRequest('/api/deposit/crypto/init', {
+            method: 'POST',
+            body: JSON.stringify({ currency, amount_usd }),
+        }),
+    withdrawRequest: (amount_coins, network, wallet_address) =>
+        apiRequest('/api/withdraw/request', {
+            method: 'POST',
+            body: JSON.stringify({ amount_coins, network, wallet_address }),
+        }),
+    withdrawStatus: () => apiRequest('/api/withdraw/status'),
+    achievements: () => apiRequest('/api/me/achievements'),
 };

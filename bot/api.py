@@ -27,6 +27,8 @@ from bot.services.user_service import get_or_create_user, get_user_stats
 from db.database import AsyncSessionLocal
 from db.models import (
     Category, Comment, Event, EventStatus, Outcome, Bet, User,
+    Achievement, UserAchievement, WithdrawalRequest, WithdrawStatus,
+    Transaction, TransactionType, Payment, PaymentMethod,
 )
 
 
@@ -410,7 +412,7 @@ async def my_bets(
 
 # ── TON / USDT депозит ──────────────────────────────────────────────────────
 
-USDT_TO_RUB = Decimal("90")  # курс USDT→RUB, можно сделать динамическим
+USDT_TO_RUB = settings.usdt_to_rub_rate
 
 
 @app.get("/api/deposit/ton/rate")
@@ -442,7 +444,6 @@ async def ton_deposit_init(
 
     amount_rub = Decimal(str(body.amount_usdt)) * USDT_TO_RUB
 
-    from db.models import Payment, PaymentMethod
     payment = Payment(
         user_id=user.id,
         method=PaymentMethod.USDT_TON,
@@ -471,7 +472,6 @@ async def ton_deposit_status(
     session: Annotated[AsyncSession, Depends(get_db)],
 ):
     """Проверяет статус депозита — вызывается клиентом каждые 30 сек."""
-    from db.models import Payment, Transaction, TransactionType
     result = await session.execute(
         select(Payment).where(Payment.id == deposit_id)
     )
@@ -575,6 +575,213 @@ async def add_comment(
         "created_at": comment.created_at.isoformat(),
         "username": user.username or user.first_name or "Аноним",
     }
+
+
+# ── Крипто-депозит через NOWPayments ─────────────────────────────────────────
+
+class CryptoDepositRequest(BaseModel):
+    currency: str   # "eth" | "btc" | "sol"
+    amount_usd: float
+
+
+@app.post("/api/deposit/crypto/init")
+async def crypto_deposit_init(
+    body: CryptoDepositRequest,
+    tg_user: Annotated[dict, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Создаёт инвойс NOWPayments. Возвращает payment_url для редиректа."""
+    currency = body.currency.lower()
+    if currency not in ("eth", "btc", "sol"):
+        raise HTTPException(400, "Поддерживаются: eth, btc, sol")
+    if body.amount_usd < 1:
+        raise HTTPException(400, "Минимум $1")
+
+    user, _ = await get_or_create_user(
+        session,
+        telegram_id=tg_user["id"],
+        username=tg_user.get("username"),
+        first_name=tg_user.get("first_name"),
+    )
+
+    from bot.services.payment_service import create_nowpayments_invoice
+    try:
+        payment, payment_url = await create_nowpayments_invoice(
+            session, user, Decimal(str(body.amount_usd)), currency
+        )
+    except ValueError as e:
+        raise HTTPException(503, str(e))
+    except Exception as e:
+        logger.exception("NOWPayments invoice error")
+        raise HTTPException(502, f"Ошибка платёжного шлюза: {e}")
+
+    return {
+        "deposit_id": payment.id,
+        "currency": currency,
+        "amount_usd": body.amount_usd,
+        "payment_url": payment_url,
+    }
+
+
+# ── Вывод выигрышей ───────────────────────────────────────────────────────────
+
+class WithdrawRequest(BaseModel):
+    amount_coins: float
+    network: str         # "usdt_ton" | "eth" | "btc" | "sol"
+    wallet_address: str
+
+
+@app.post("/api/withdraw/request")
+async def withdraw_request(
+    body: WithdrawRequest,
+    tg_user: Annotated[dict, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Создаёт заявку на вывод. Монеты списываются сразу — на хранение."""
+    valid_networks = {"usdt_ton", "eth", "btc", "sol"}
+    if body.network not in valid_networks:
+        raise HTTPException(400, f"Сеть должна быть одной из: {', '.join(valid_networks)}")
+    if not body.wallet_address or len(body.wallet_address) < 10:
+        raise HTTPException(400, "Некорректный адрес кошелька")
+
+    amount = Decimal(str(body.amount_coins))
+    if amount < settings.min_withdraw_coins:
+        raise HTTPException(400, f"Минимальный вывод: {settings.min_withdraw_coins:.0f} монет")
+
+    user, _ = await get_or_create_user(
+        session,
+        telegram_id=tg_user["id"],
+        username=tg_user.get("username"),
+        first_name=tg_user.get("first_name"),
+    )
+
+    if user.balance_rub < amount:
+        raise HTTPException(400, "Недостаточно монет на балансе")
+
+    balance_before = user.balance_rub
+    user.balance_rub -= amount
+
+    withdrawal = WithdrawalRequest(
+        user_id=user.id,
+        amount_coins=amount,
+        network=body.network,
+        wallet_address=body.wallet_address,
+        status=WithdrawStatus.PENDING,
+    )
+    session.add(withdrawal)
+
+    tx = Transaction(
+        user_id=user.id,
+        type=TransactionType.WITHDRAW,
+        amount_rub=amount,
+        balance_before=balance_before,
+        balance_after=user.balance_rub,
+        description=f"Заявка на вывод ({body.network})",
+    )
+    session.add(tx)
+    await session.commit()
+    await session.refresh(withdrawal)
+
+    # Уведомить всех администраторов
+    try:
+        from bot.notifier import notify_admins
+        await notify_admins(
+            f"💸 Новая заявка на вывод #{withdrawal.id}\n"
+            f"Пользователь: {user.first_name or ''} @{user.username or ''} (ID {user.telegram_id})\n"
+            f"Сумма: {amount:,.0f} монет\n"
+            f"Сеть: {body.network}\n"
+            f"Кошелёк: {body.wallet_address}\n\n"
+            f"Используй /withdrawals в боте."
+        )
+    except Exception as e:
+        logger.warning("Failed to notify admins about withdrawal: %s", e)
+
+    return {
+        "id": withdrawal.id,
+        "amount_coins": float(amount),
+        "network": body.network,
+        "wallet_address": body.wallet_address,
+        "status": withdrawal.status.value,
+        "created_at": withdrawal.created_at.isoformat(),
+        "new_balance": float(user.balance_rub),
+    }
+
+
+@app.get("/api/withdraw/status")
+async def withdraw_status(
+    tg_user: Annotated[dict, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+):
+    """История заявок на вывод текущего пользователя."""
+    user_result = await session.execute(
+        select(User).where(User.telegram_id == tg_user["id"])
+    )
+    user = user_result.scalar_one_or_none()
+    if not user:
+        return []
+
+    result = await session.execute(
+        select(WithdrawalRequest)
+        .where(WithdrawalRequest.user_id == user.id)
+        .order_by(WithdrawalRequest.created_at.desc())
+        .limit(20)
+    )
+    withdrawals = result.scalars().all()
+
+    return [
+        {
+            "id": w.id,
+            "amount_coins": float(w.amount_coins),
+            "network": w.network,
+            "wallet_address": w.wallet_address,
+            "status": w.status.value,
+            "admin_note": w.admin_note,
+            "created_at": w.created_at.isoformat(),
+            "processed_at": w.processed_at.isoformat() if w.processed_at else None,
+        }
+        for w in withdrawals
+    ]
+
+
+# ── Ачивки ────────────────────────────────────────────────────────────────────
+
+@app.get("/api/me/achievements")
+async def my_achievements(
+    tg_user: Annotated[dict, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Все ачивки платформы с пометкой earned и датой получения."""
+    all_result = await session.execute(
+        select(Achievement).order_by(Achievement.id)
+    )
+    all_achievements = all_result.scalars().all()
+
+    user_result = await session.execute(
+        select(User).where(User.telegram_id == tg_user["id"])
+    )
+    user = user_result.scalar_one_or_none()
+
+    earned_map: dict[int, str] = {}
+    if user:
+        ua_result = await session.execute(
+            select(UserAchievement).where(UserAchievement.user_id == user.id)
+        )
+        for ua in ua_result.scalars().all():
+            earned_map[ua.achievement_id] = ua.unlocked_at.isoformat()
+
+    return [
+        {
+            "id": a.id,
+            "slug": a.slug,
+            "name": a.name,
+            "emoji": a.emoji,
+            "description": a.description,
+            "rarity": a.rarity,
+            "earned": a.id in earned_map,
+            "unlocked_at": earned_map.get(a.id),
+        }
+        for a in all_achievements
+    ]
 
 
 # Раздаём Mini App статикой

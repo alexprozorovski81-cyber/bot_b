@@ -108,3 +108,39 @@ async def yookassa_webhook(request: Request) -> dict:
             logger.warning(f"Failed to notify user: {e}")
 
         return {"status": "ok"}
+
+
+@router.post("/nowpayments")
+async def nowpayments_webhook(request: Request) -> dict:
+    """
+    IPN-вебхук от NOWPayments (ETH/BTC/SOL).
+    Документация: https://documenter.getpostman.com/view/7907941/2s93JqTRWN
+    """
+    body_bytes = await request.body()
+    signature = request.headers.get("x-nowpayments-sig", "")
+
+    from bot.services.payment_service import verify_nowpayments_webhook, credit_nowpayments_payment
+    if not await verify_nowpayments_webhook(body_bytes, signature):
+        logger.warning("NOWPayments webhook: invalid signature")
+        raise HTTPException(status_code=401, detail="Invalid signature")
+
+    try:
+        data = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON")
+
+    payment_status = data.get("payment_status", "")
+    order_id = str(data.get("order_id", ""))
+    tx_hash = data.get("outcome_transaction_hash") or data.get("payin_hash") or ""
+
+    logger.info("NOWPayments webhook: status=%s order=%s", payment_status, order_id)
+
+    if payment_status == "finished" and order_id:
+        async with AsyncSessionLocal() as session:
+            credited = await credit_nowpayments_payment(session, order_id, tx_hash)
+            if credited:
+                logger.info("NOWPayments: order %s credited", order_id)
+            else:
+                logger.info("NOWPayments: order %s already processed or not found", order_id)
+
+    return {"status": "ok"}

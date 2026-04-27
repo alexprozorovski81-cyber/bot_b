@@ -555,6 +555,7 @@ async def admin_menu(message: Message) -> None:
         "• /cancel_event &lt;event_id&gt; — отменить с возвратом\n"
         "• /stats — статистика платформы\n"
         "• /grant &lt;user_id&gt; &lt;amount&gt; — начислить пользователю\n"
+        "• /withdrawals — заявки на вывод (одобрить/отклонить)\n"
     )
     await message.answer(text, parse_mode="HTML")
 
@@ -802,3 +803,154 @@ async def cmd_grant(message: Message) -> None:
         f"Новый баланс: <b>{balance_after:.2f} ₽</b>",
         parse_mode="HTML",
     )
+
+
+# ── Управление заявками на вывод ────────────────────────────────────────────
+
+@router.message(Command("withdrawals"))
+async def cmd_withdrawals(message: Message) -> None:
+    if not is_admin(message.from_user.id):
+        return
+
+    from db.models import WithdrawalRequest, WithdrawStatus
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(
+            select(WithdrawalRequest, User)
+            .join(User, WithdrawalRequest.user_id == User.id)
+            .where(WithdrawalRequest.status == WithdrawStatus.PENDING)
+            .order_by(WithdrawalRequest.created_at)
+            .limit(20)
+        )
+        rows = result.all()
+
+    if not rows:
+        await message.answer("✅ Нет ожидающих заявок на вывод.")
+        return
+
+    await message.answer(f"💸 Заявок на вывод: <b>{len(rows)}</b>", parse_mode="HTML")
+    for wr, user in rows:
+        text = (
+            f"<b>Заявка #{wr.id}</b>\n"
+            f"👤 @{user.username or user.first_name} (tg:{user.telegram_id})\n"
+            f"💰 Сумма: <b>{wr.amount_coins:,.0f} монет</b>\n"
+            f"🌐 Сеть: <b>{wr.network.upper()}</b>\n"
+            f"📋 Кошелёк: <code>{wr.wallet_address}</code>\n"
+            f"🕐 {wr.created_at.strftime('%d.%m.%Y %H:%M')}"
+        )
+        kb = InlineKeyboardMarkup(inline_keyboard=[[
+            InlineKeyboardButton(text="✅ Выплатил", callback_data=f"withdraw:approve:{wr.id}"),
+            InlineKeyboardButton(text="❌ Отклонить", callback_data=f"withdraw:reject:{wr.id}"),
+        ]])
+        await message.answer(text, reply_markup=kb, parse_mode="HTML")
+
+
+@router.callback_query(F.data.startswith("withdraw:approve:"))
+async def approve_withdrawal(callback: CallbackQuery) -> None:
+    if not is_admin(callback.from_user.id):
+        await callback.answer("Только для администратора", show_alert=True)
+        return
+
+    wr_id = int(callback.data.split(":")[2])
+    from db.models import WithdrawalRequest, WithdrawStatus
+    from datetime import datetime, timezone
+
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(
+            select(WithdrawalRequest).where(WithdrawalRequest.id == wr_id)
+        )
+        wr = result.scalar_one_or_none()
+        if not wr or wr.status != WithdrawStatus.PENDING:
+            await callback.answer("Заявка уже обработана", show_alert=True)
+            return
+
+        wr.status = WithdrawStatus.PAID
+        wr.processed_at = datetime.now(timezone.utc)
+        await session.commit()
+
+        # Уведомляем пользователя
+        user_result = await session.execute(select(User).where(User.id == wr.user_id))
+        user = user_result.scalar_one_or_none()
+
+    await callback.message.edit_reply_markup(reply_markup=None)
+    await callback.message.answer(
+        f"✅ Заявка #{wr_id} отмечена как <b>выплачена</b>.",
+        parse_mode="HTML",
+    )
+
+    if user:
+        try:
+            from aiogram import Bot as _Bot
+            from bot.config import settings as _s
+            from bot.main import bot as tg_bot
+            await tg_bot.send_message(
+                user.telegram_id,
+                f"✅ <b>Вывод #{wr_id} выплачен!</b>\n\n"
+                f"💰 {wr.amount_coins:,.0f} монет отправлено на кошелёк:\n"
+                f"<code>{wr.wallet_address}</code>\n"
+                f"🌐 Сеть: {wr.network.upper()}",
+                parse_mode="HTML",
+            )
+        except Exception as e:
+            logger.warning(f"Failed to notify user about withdrawal: {e}")
+
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("withdraw:reject:"))
+async def reject_withdrawal(callback: CallbackQuery) -> None:
+    if not is_admin(callback.from_user.id):
+        await callback.answer("Только для администратора", show_alert=True)
+        return
+
+    wr_id = int(callback.data.split(":")[2])
+    from db.models import WithdrawalRequest, WithdrawStatus
+    from datetime import datetime, timezone
+
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(
+            select(WithdrawalRequest).where(WithdrawalRequest.id == wr_id)
+        )
+        wr = result.scalar_one_or_none()
+        if not wr or wr.status != WithdrawStatus.PENDING:
+            await callback.answer("Заявка уже обработана", show_alert=True)
+            return
+
+        # Вернуть монеты пользователю
+        user_result = await session.execute(select(User).where(User.id == wr.user_id))
+        user = user_result.scalar_one_or_none()
+        if user:
+            balance_before = user.balance_rub
+            user.balance_rub += wr.amount_coins
+            session.add(Transaction(
+                user_id=user.id,
+                type=TransactionType.BONUS,
+                amount_rub=wr.amount_coins,
+                balance_before=balance_before,
+                balance_after=user.balance_rub,
+                description=f"Возврат по заявке на вывод #{wr_id}",
+            ))
+
+        wr.status = WithdrawStatus.REJECTED
+        wr.processed_at = datetime.now(timezone.utc)
+        await session.commit()
+
+    await callback.message.edit_reply_markup(reply_markup=None)
+    await callback.message.answer(
+        f"❌ Заявка #{wr_id} <b>отклонена</b>. Монеты возвращены пользователю.",
+        parse_mode="HTML",
+    )
+
+    if user:
+        try:
+            from bot.main import bot as tg_bot
+            await tg_bot.send_message(
+                user.telegram_id,
+                f"❌ <b>Заявка на вывод #{wr_id} отклонена</b>.\n"
+                f"💰 {wr.amount_coins:,.0f} монет возвращены на баланс.\n\n"
+                f"По вопросам обращайся в поддержку.",
+                parse_mode="HTML",
+            )
+        except Exception as e:
+            logger.warning(f"Failed to notify user about rejection: {e}")
+
+    await callback.answer()
