@@ -24,6 +24,7 @@ from aiogram.types import (
 from sqlalchemy import func, select
 
 from bot.config import settings
+from bot.services.event_images import pick_event_image
 from bot.services.resolution_service import resolve_event, cancel_event
 from db.database import AsyncSessionLocal
 from db.models import (
@@ -201,12 +202,19 @@ async def addevent_confirm(callback: CallbackQuery, state: FSMContext) -> None:
     slug = re.sub(r"[^a-z0-9]+", "-", data["title"].lower())[:80].strip("-")
     slug = f"custom-{slug}-{int(now.timestamp())}"
 
+    # Выбор картинки: новость → Wiki → SVG по категории
+    image_url = await pick_event_image(
+        title=data["title"],
+        category_slug=data.get("category_slug"),
+        prefilled=data.get("prefill_image_url"),
+    )
+
     async with AsyncSessionLocal() as session:
         event = Event(
             slug=slug,
             title=data["title"],
             description=data["title"],
-            image_url=data.get("prefill_image_url"),   # фото из новости
+            image_url=image_url,
             category_id=data["category_id"],
             status=EventStatus.ACTIVE,
             liquidity_b=Decimal("1000.00"),
@@ -226,6 +234,10 @@ async def addevent_confirm(callback: CallbackQuery, state: FSMContext) -> None:
 
         await session.commit()
         event_id = event.id
+        logger.info(
+            f"Event #{event_id} '{event.title[:60]}' created and committed "
+            f"(slug={event.slug}, image={image_url})"
+        )
 
     await callback.message.edit_text(
         f"<b>✅ Событие #{event_id} создано!</b>\n\n"
@@ -356,6 +368,65 @@ async def cmd_newscheck(message: Message) -> None:
             )
 
 
+# ── Backfill картинок для существующих событий ──────────────────────────────
+
+@router.message(Command("updateimages"))
+async def cmd_updateimages(message: Message) -> None:
+    """
+    /updateimages — пройтись по активным событиям и догрузить Wiki-картинки.
+
+    Обновляет:
+      - события с NULL image_url (любым результатом pick_event_image)
+      - события с SVG-фоллбеком (/miniapp/images/...) — только если Wikipedia
+        нашла реальное http(s) фото; иначе SVG остаётся.
+    """
+    if not is_admin(message.from_user.id):
+        return
+
+    await message.answer("🖼 Обновляю картинки событий... Это займёт минуту.")
+
+    updated = 0
+    skipped = 0
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(
+            select(Event, Category)
+            .join(Category, Event.category_id == Category.id)
+            .where(Event.status.in_([EventStatus.ACTIVE, EventStatus.LOCKED]))
+        )
+        rows = result.all()
+
+        for event, category in rows:
+            try:
+                new_url = await pick_event_image(
+                    title=event.title,
+                    category_slug=category.slug,
+                    prefilled=None,
+                )
+            except Exception as e:
+                logger.warning(f"updateimages: skip #{event.id} — {e}")
+                skipped += 1
+                continue
+
+            old = event.image_url or ""
+            is_real_photo = new_url.startswith(("http://", "https://"))
+            should_update = (
+                not old                                      # было пусто
+                or (is_real_photo and old != new_url)        # нашли реальное Wiki
+            )
+            if should_update:
+                event.image_url = new_url
+                updated += 1
+            else:
+                skipped += 1
+
+        await session.commit()
+
+    await message.answer(
+        f"✅ Готово: обновлено <b>{updated}</b>, пропущено <b>{skipped}</b>.",
+        parse_mode="HTML",
+    )
+
+
 # ── Остальные команды ────────────────────────────────────────────────────────
 
 @router.message(Command("admin"))
@@ -369,6 +440,7 @@ async def admin_menu(message: Message) -> None:
         "• /events — список активных событий\n"
         "• /addevent — создать новое событие\n"
         "• /newscheck — проверить RSS прямо сейчас\n"
+        "• /updateimages — обновить картинки событий (Wiki + SVG)\n"
         "• /resolve &lt;event_id&gt; — разрешить событие\n"
         "• /cancel_event &lt;event_id&gt; — отменить с возвратом\n"
         "• /stats — статистика платформы\n"

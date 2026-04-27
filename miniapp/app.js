@@ -171,13 +171,21 @@ function buildEventCard(event) {
     const tpl = document.getElementById('event-card-template');
     const card = tpl.content.cloneNode(true).querySelector('.event-card');
 
-    // Изображение / эмодзи
+    // Изображение / эмодзи. Сразу рисуем эмодзи как плейсхолдер,
+    // и параллельно пробуем подгрузить фото — если получится, заменим.
     const img = card.querySelector('.event-image');
+    img.textContent = getCategoryEmoji(event);
     if (event.image_url) {
-        img.style.backgroundImage = `url(${event.image_url})`;
-        img.style.backgroundSize = 'cover';
-    } else {
-        img.textContent = getCategoryEmoji(event);
+        const probe = new Image();
+        probe.onload = () => {
+            img.style.backgroundImage = `url("${event.image_url}")`;
+            img.style.backgroundSize = 'cover';
+            img.textContent = '';
+        };
+        probe.onerror = () => {
+            // Фото не загрузилось (404/CORS) — оставляем эмодзи.
+        };
+        probe.src = event.image_url;
     }
 
     // Заголовок (кликабелен)
@@ -620,13 +628,10 @@ async function openEventDetail(eventId) {
         const cat = event.category;
         const isHot = (new Date(event.closes_at) - Date.now()) < 86400000 * 3;
 
-        let imageHtml = '';
-        if (event.image_url) {
-            imageHtml = `<div class="event-detail-image" style="background-image:url(${event.image_url})"></div>`;
-        } else {
-            const emoji = cat ? cat.emoji : '🎯';
-            imageHtml = `<div class="event-detail-image">${emoji}</div>`;
-        }
+        // Сначала рендерим эмодзи как плейсхолдер; ниже после insertion в DOM
+        // пробуем подгрузить фото и заменяем background-image при успехе.
+        const detailEmoji = cat ? cat.emoji : '🎯';
+        const imageHtml = `<div class="event-detail-image" data-image-url="${event.image_url || ''}">${detailEmoji}</div>`;
 
         const outcomesHtml = event.outcomes.map((o, i) => {
             const pct = Math.round(o.price * 100);
@@ -695,6 +700,18 @@ async function openEventDetail(eventId) {
                 <div class="event-detail-outcomes">${outcomesHtml}</div>
             </div>
         `;
+
+        // Подгрузка детальной картинки с фоллбеком на эмодзи
+        const detailImg = feed.querySelector('.event-detail-image');
+        if (detailImg && event.image_url) {
+            const probe = new Image();
+            probe.onload = () => {
+                detailImg.style.backgroundImage = `url("${event.image_url}")`;
+                detailImg.textContent = '';
+            };
+            probe.src = event.image_url;
+            // на onerror — оставляем эмодзи, ничего не делаем
+        }
 
         // Рисуем график
         setTimeout(() => drawOddsChart('odds-chart', event.outcomes), 50);

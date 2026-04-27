@@ -21,7 +21,9 @@ class Settings(BaseSettings):
         return [int(x.strip()) for x in self.admin_ids.split(",") if x.strip()]
 
     # Database
-    database_url: str = "sqlite+aiosqlite:///./predictbet.db"
+    # Default — абсолютный путь в /data (persistenceMount на Amvera).
+    # Локально переопределяется через .env (DATABASE_URL=...).
+    database_url: str = "sqlite+aiosqlite:////data/predictbet.db"
     redis_url: str = "redis://localhost:6379/0"
 
     # API

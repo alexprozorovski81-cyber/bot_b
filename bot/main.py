@@ -144,6 +144,22 @@ async def init_database() -> None:
     from db.models import Base
     from sqlalchemy import text
 
+    # Логируем фактический путь к БД — критично для диагностики персистентности
+    # на хостингах (Amvera persistenceMount=/data). Если URL не указывает на /data,
+    # данные потеряются при рестарте контейнера.
+    db_url = settings.database_url
+    logger.info(f"Database URL: {db_url}")
+    if db_url.startswith("sqlite"):
+        # Достаём путь файла из sqlite URL вида sqlite+aiosqlite:////data/predictbet.db
+        sqlite_path = db_url.split("://", 1)[-1].lstrip("/")
+        sqlite_abs = "/" + sqlite_path if db_url.count("/") >= 4 else os.path.abspath(sqlite_path)
+        logger.info(f"SQLite file resolved path: {sqlite_abs}")
+        if not sqlite_abs.startswith("/data/"):
+            logger.warning(
+                "DB path is NOT under /data — на Amvera данные будут "
+                "стираться при рестарте! Установи DATABASE_URL=sqlite+aiosqlite:////data/predictbet.db"
+            )
+
     # Создаём таблицы
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
