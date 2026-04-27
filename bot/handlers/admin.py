@@ -207,6 +207,7 @@ async def addevent_confirm(callback: CallbackQuery, state: FSMContext) -> None:
         title=data["title"],
         category_slug=data.get("category_slug"),
         prefilled=data.get("prefill_image_url"),
+        slug=slug,
     )
 
     async with AsyncSessionLocal() as session:
@@ -401,6 +402,7 @@ async def cmd_updateimages(message: Message) -> None:
                     title=event.title,
                     category_slug=category.slug,
                     prefilled=None,
+                    slug=event.slug,
                 )
             except Exception as e:
                 logger.warning(f"updateimages: skip #{event.id} — {e}")
@@ -408,14 +410,12 @@ async def cmd_updateimages(message: Message) -> None:
                 continue
 
             old = event.image_url or ""
-            is_real_photo = new_url.startswith(("http://", "https://"))
-            should_update = (
-                not old                                      # было пусто
-                or (is_real_photo and old != new_url)        # нашли реальное Wiki
-            )
-            if should_update:
+            got_real_photo = new_url.startswith(("http://", "https://"))
+            # Обновляем если: было пусто, или нашли реальное фото (заменяем SVG тоже)
+            if not old or (got_real_photo and new_url != old):
                 event.image_url = new_url
                 updated += 1
+                logger.info(f"updateimages: #{event.id} → {new_url[:60]}")
             else:
                 skipped += 1
 
