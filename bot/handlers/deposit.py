@@ -15,9 +15,9 @@ from bot import texts
 from bot.config import settings
 from bot.services.payment_service import (
     create_card_payment, check_card_payment,
-    create_usdt_payment, check_usdt_arrival,
-    USDT_TO_RUB_RATE,
+    create_usdt_payment, check_usdt_toncenter,
 )
+from bot.services.rate_service import get_usdt_rub_rate
 from bot.services.user_service import get_or_create_user
 from db.database import AsyncSessionLocal
 from db.models import (
@@ -256,11 +256,12 @@ async def deposit_usdt(callback: CallbackQuery) -> None:
             session, user, Decimal("10")
         )
 
+    rate = await get_usdt_rub_rate()
     await callback.message.edit_text(
         texts.DEPOSIT_USDT.format(
             address=settings.usdt_wallet_address,
             min_usdt=f"{settings.min_deposit_usdt:.0f}",
-            rate=f"{USDT_TO_RUB_RATE:.0f}",
+            rate=f"{rate:.0f}",
         ),
         reply_markup=kb.usdt_sent_kb(str(payment.id)),
         parse_mode="HTML",
@@ -282,7 +283,7 @@ async def check_usdt(callback: CallbackQuery) -> None:
 
         await callback.answer("🔍 Проверяю транзакцию...", show_alert=False)
 
-        found = await check_usdt_arrival(session, payment)
+        found = await check_usdt_toncenter(session, payment)
         if not found:
             await callback.answer(
                 "⏳ Транзакция ещё не пришла. Попробуй через 1–2 минуты.",

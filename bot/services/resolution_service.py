@@ -101,6 +101,7 @@ async def resolve_event(
             bet.payout_rub = payout
 
             # Транзакции
+            fee_note = f" (комиссия {fee:.2f})" if fee > 0 else ""
             session.add(Transaction(
                 user_id=user.id,
                 type=TransactionType.BET_PAYOUT,
@@ -108,18 +109,8 @@ async def resolve_event(
                 balance_before=balance_before,
                 balance_after=balance_after,
                 bet_id=bet.id,
-                description=f"Выигрыш по «{event.title[:60]}»",
+                description=f"Выигрыш по «{event.title[:60]}»{fee_note}",
             ))
-            if fee > 0:
-                session.add(Transaction(
-                    user_id=user.id,
-                    type=TransactionType.FEE,
-                    amount_rub=fee,
-                    balance_before=balance_after,
-                    balance_after=balance_after,
-                    bet_id=bet.id,
-                    description=f"Комиссия платформы {fee_pct}%",
-                ))
 
             total_payout += payout
             total_fees += fee

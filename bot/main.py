@@ -23,6 +23,7 @@ from bot.handlers import admin
 from bot.services.oracle_service import check_oracles
 from bot.services.news_service import fetch_news_suggestions, fetch_cbr_rate
 from bot.services.auto_events_service import process_auto_events
+from bot.services.withdrawal_service import process_pending_withdrawals
 
 
 logging.basicConfig(
@@ -30,6 +31,28 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
 )
 logger = logging.getLogger(__name__)
+
+
+async def _make_storage():
+    """Redis FSM storage если Redis доступен, иначе MemoryStorage."""
+    if settings.redis_url and settings.redis_url != "redis://localhost:6379/0":
+        try:
+            from aiogram.fsm.storage.redis import RedisStorage
+            storage = RedisStorage.from_url(settings.redis_url)
+            logger.info("FSM storage: Redis (%s)", settings.redis_url)
+            return storage
+        except Exception as e:
+            logger.warning("Redis unavailable (%s), falling back to MemoryStorage", e)
+    try:
+        from aiogram.fsm.storage.redis import RedisStorage
+        storage = RedisStorage.from_url(settings.redis_url)
+        # Проверяем соединение
+        await storage.redis.ping()
+        logger.info("FSM storage: Redis")
+        return storage
+    except Exception:
+        logger.info("FSM storage: MemoryStorage (Redis not available)")
+        return MemoryStorage()
 
 
 async def run_bot() -> None:
@@ -40,7 +63,9 @@ async def run_bot() -> None:
     )
     notifier.set_bot(bot)
 
-    dp = Dispatcher(storage=MemoryStorage())
+    # Используем Redis если доступен, иначе MemoryStorage
+    storage = await _make_storage()
+    dp = Dispatcher(storage=storage)
     dp.include_router(admin.router)
     dp.include_router(get_main_router())
 
@@ -64,27 +89,83 @@ async def run_api() -> None:
 
 
 async def run_cron() -> None:
-    """Cron-задачи: оракулы каждые 5 мин, новости + авто-события каждые 30 мин."""
-    logger.info("Cron task started (oracles every 5min, news+auto-events every 30min)")
+    """
+    Cron-задачи:
+    - авто-выводы каждые 2 мин
+    - оракулы каждые 10 мин (5 тиков по 2 мин)
+    - новости + авто-события каждые 30 мин (15 тиков)
+    """
+    logger.info("Cron task started (withdrawals every 2min, oracles every 10min, news every 30min)")
     await asyncio.sleep(15)  # Ждём пока бот запустится
 
+    from db.database import AsyncSessionLocal
+    oracle_tick = 0
     news_tick = 0
-    while True:
-        # -- Оракулы (каждые 5 мин) --
-        try:
-            resolved = await check_oracles()
-            if resolved > 0:
-                logger.info(f"Cron: resolved {resolved} events via oracles")
-        except Exception as e:
-            logger.exception(f"Cron oracle error: {e}")
 
-        # -- Новости + авто-события (каждые 30 мин = 6 тиков по 5 мин) --
+    while True:
+        # -- Авто-выводы (каждые 2 мин) --
+        try:
+            async with AsyncSessionLocal() as session:
+                paid = await process_pending_withdrawals(session)
+                if paid > 0:
+                    logger.info(f"Cron: auto-paid {paid} withdrawals")
+        except Exception as e:
+            logger.exception(f"Cron withdrawal error: {e}")
+
+        # -- Проверяем pending USDT депозиты (каждые 10 мин = 5 тиков) --
+        oracle_tick += 1
+        if oracle_tick >= 5:
+            oracle_tick = 0
+            try:
+                resolved = await check_oracles()
+                if resolved > 0:
+                    logger.info(f"Cron: resolved {resolved} events via oracles")
+            except Exception as e:
+                logger.exception(f"Cron oracle error: {e}")
+
+            # Проверяем pending USDT-депозиты старше 5 мин
+            try:
+                await _check_pending_deposits()
+            except Exception as e:
+                logger.exception(f"Cron deposit check error: {e}")
+
+        # -- Новости + авто-события (каждые 30 мин = 15 тиков по 2 мин) --
         news_tick += 1
-        if news_tick >= 6:
+        if news_tick >= 15:
             news_tick = 0
             await _run_news_scan()
 
-        await asyncio.sleep(300)
+        await asyncio.sleep(120)
+
+
+async def _check_pending_deposits() -> None:
+    """Проверяет pending USDT-депозиты старше 5 минут через Toncenter."""
+    from datetime import datetime, timezone, timedelta
+    from sqlalchemy import select
+    from db.database import AsyncSessionLocal
+    from db.models import Payment, PaymentMethod
+    from bot.services.payment_service import check_usdt_toncenter
+
+    cutoff = datetime.now(timezone.utc) - timedelta(minutes=5)
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(
+            select(Payment).where(
+                Payment.method == PaymentMethod.USDT_TON,
+                Payment.status == "pending",
+                Payment.is_deposit == True,  # noqa: E712
+                Payment.created_at <= cutoff,
+            ).limit(20)
+        )
+        pending = list(result.scalars().all())
+
+    for payment in pending:
+        try:
+            async with AsyncSessionLocal() as session:
+                found = await check_usdt_toncenter(session, payment)
+                if found:
+                    logger.info(f"Cron: confirmed pending deposit payment_id={payment.id}")
+        except Exception as e:
+            logger.warning(f"Deposit check error for payment {payment.id}: {e}")
 
 
 async def _run_news_scan() -> None:
@@ -193,6 +274,12 @@ async def init_database() -> None:
             )""",
             "CREATE INDEX IF NOT EXISTS ix_withdrawals_user_id ON withdrawals (user_id)",
             "CREATE INDEX IF NOT EXISTS ix_withdrawals_status ON withdrawals (status)",
+            "ALTER TABLE withdrawals ADD COLUMN amount_usdt NUMERIC(18,6)",
+            "ALTER TABLE withdrawals ADD COLUMN rate_at_request NUMERIC(18,4)",
+            "ALTER TABLE withdrawals ADD COLUMN tx_hash VARCHAR(128)",
+            "ALTER TABLE withdrawals ADD COLUMN fee_coins NUMERIC(18,2) DEFAULT 0",
+            "ALTER TABLE withdrawals ADD COLUMN is_auto BOOLEAN DEFAULT 0",
+            "ALTER TABLE withdrawals ADD COLUMN retry_count INTEGER DEFAULT 0",
             # Achievements
             """CREATE TABLE IF NOT EXISTS achievements (
                 id INTEGER PRIMARY KEY,

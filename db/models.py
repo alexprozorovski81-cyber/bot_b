@@ -2,7 +2,7 @@
 Модели базы данных для PredictBet.
 Используется SQLAlchemy 2.0 с async поддержкой.
 """
-from datetime import datetime
+from datetime import datetime, timezone
 from decimal import Decimal
 from enum import Enum as PyEnum
 
@@ -87,10 +87,10 @@ class User(Base):
     is_admin: Mapped[bool] = mapped_column(Boolean, default=False)
 
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=datetime.utcnow
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )
     last_active_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=datetime.utcnow
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )
 
     # Связи
@@ -146,7 +146,7 @@ class Event(Base):
     article_url: Mapped[str | None] = mapped_column(String(512))
 
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=datetime.utcnow
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )
 
     category: Mapped["Category"] = relationship(back_populates="events")
@@ -204,7 +204,7 @@ class Bet(Base):
     payout_rub: Mapped[Decimal | None] = mapped_column(Numeric(18, 2))
 
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=datetime.utcnow
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )
 
     user: Mapped["User"] = relationship(back_populates="bets")
@@ -233,7 +233,7 @@ class Transaction(Base):
     description: Mapped[str | None] = mapped_column(String(256))
 
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=datetime.utcnow, index=True
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True
     )
 
     user: Mapped["User"] = relationship(back_populates="transactions")
@@ -258,7 +258,7 @@ class Payment(Base):
     is_deposit: Mapped[bool] = mapped_column(Boolean, default=True)
 
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=datetime.utcnow
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
@@ -270,14 +270,25 @@ class WithdrawalRequest(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
     amount_coins: Mapped[Decimal] = mapped_column(Numeric(18, 2))
+    # Сумма в USDT и курс на момент создания (для авто-вывода)
+    amount_usdt: Mapped[Decimal | None] = mapped_column(Numeric(18, 6))
+    rate_at_request: Mapped[Decimal | None] = mapped_column(Numeric(18, 4))
     network: Mapped[str] = mapped_column(String(32))
     wallet_address: Mapped[str] = mapped_column(String(256))
     status: Mapped[WithdrawStatus] = mapped_column(
         Enum(WithdrawStatus), default=WithdrawStatus.PENDING, index=True
     )
+    # TX hash в блокчейне после выплаты
+    tx_hash: Mapped[str | None] = mapped_column(String(128))
+    # Комиссия газа списанная с пользователя (в монетах)
+    fee_coins: Mapped[Decimal] = mapped_column(Numeric(18, 2), default=Decimal("0"))
+    # True если вывод выполнен автоматически (TON SDK), False = ручной
+    is_auto: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Счётчик попыток автовывода
+    retry_count: Mapped[int] = mapped_column(default=0)
     admin_note: Mapped[str | None] = mapped_column(String(512))
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=datetime.utcnow, index=True
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True
     )
     processed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
@@ -306,7 +317,7 @@ class UserAchievement(Base):
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
     achievement_id: Mapped[int] = mapped_column(ForeignKey("achievements.id"), index=True)
     unlocked_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=datetime.utcnow
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )
 
     achievement: Mapped["Achievement"] = relationship()
@@ -322,7 +333,7 @@ class Comment(Base):
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
     text: Mapped[str] = mapped_column(String(500))
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=datetime.utcnow, index=True
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True
     )
 
     event: Mapped["Event"] = relationship()

@@ -1,10 +1,15 @@
 """Обработчики команд /start, главного меню и информационных кнопок."""
 import logging
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 
 from aiogram import Router, F
-from aiogram.filters import CommandStart, CommandObject
-from aiogram.types import Message, CallbackQuery
+from aiogram.filters import CommandStart, CommandObject, StateFilter
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
+from aiogram.types import (
+    Message, CallbackQuery,
+    InlineKeyboardMarkup, InlineKeyboardButton,
+)
 
 from bot import keyboards as kb
 from bot import texts
@@ -106,6 +111,36 @@ async def show_about(message: Message) -> None:
             fee=f"{settings.platform_fee_percent:.0f}",
         ),
         parse_mode="HTML",
+    )
+
+
+@router.message(F.text == texts.BTN_WITHDRAW)
+async def start_withdraw(message: Message) -> None:
+    """Показывает меню вывода — направляет в мини-апп."""
+    async with AsyncSessionLocal() as session:
+        user, _ = await get_or_create_user(
+            session, message.from_user.id,
+            message.from_user.username,
+            message.from_user.first_name,
+        )
+    await message.answer(
+        texts.WITHDRAW_MENU.format(
+            balance=f"{user.balance_rub:.0f}",
+            min_withdraw=f"{settings.min_withdraw_coins:.0f}",
+        ),
+        parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
+            InlineKeyboardButton(
+                text="💸 Открыть форму вывода",
+                web_app=__import__("aiogram").types.WebAppInfo(url=settings.miniapp_url)
+                if settings.miniapp_url.startswith("https://")
+                else None,
+            ) if settings.miniapp_url.startswith("https://")
+            else InlineKeyboardButton(
+                text="💸 Открыть мини-апп",
+                callback_data="main:menu",
+            )
+        ]]),
     )
 
 

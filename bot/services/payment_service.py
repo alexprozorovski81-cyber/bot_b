@@ -19,8 +19,7 @@ from db.models import Payment, PaymentMethod, Transaction, TransactionType, User
 logger = logging.getLogger(__name__)
 
 
-# Курс USDT → RUB — берётся из конфига (USDT_TO_RUB_RATE в .env)
-USDT_TO_RUB_RATE = settings.usdt_to_rub_rate
+from bot.services.rate_service import get_usdt_rub_rate
 
 
 def _setup_yookassa() -> None:
@@ -102,7 +101,8 @@ async def create_usdt_payment(
     Создаёт запись об ожидаемом USDT-платеже.
     Реальная проверка прихода — через check_usdt_arrival().
     """
-    amount_rub = (amount_usdt * USDT_TO_RUB_RATE).quantize(Decimal("0.01"))
+    rate = await get_usdt_rub_rate()
+    amount_rub = (amount_usdt * rate).quantize(Decimal("0.01"))
     payment = Payment(
         user_id=user.id,
         method=PaymentMethod.USDT_TON,
@@ -121,18 +121,14 @@ async def check_usdt_arrival(
     payment: Payment,
 ) -> bool:
     """
-    Проверяет приход USDT через tonapi.io.
-
-    Возвращает True если транзакция найдена.
-
-    ВАЖНО: для production нужна более надёжная проверка —
-    с user-specific комментарием в транзакции, чтобы матчить пользователя.
-    Это упрощённая версия для демо.
+    DEPRECATED — использует tonapi.io без привязки к memo, уязвима к коллизиям.
+    Используй check_usdt_toncenter() вместо этой функции.
     """
     if not settings.ton_api_key or not settings.usdt_wallet_address:
         return False
 
-    expected_usdt = payment.amount_rub / USDT_TO_RUB_RATE
+    rate = await get_usdt_rub_rate()
+    expected_usdt = payment.amount_rub / rate
 
     headers = {"Authorization": f"Bearer {settings.ton_api_key}"}
     url = (

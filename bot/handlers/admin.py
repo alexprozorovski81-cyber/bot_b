@@ -15,7 +15,7 @@ from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
 from aiogram import Router, F
-from aiogram.filters import Command
+from aiogram.filters import Command, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import (
@@ -844,113 +844,62 @@ async def cmd_withdrawals(message: Message) -> None:
         await message.answer(text, reply_markup=kb, parse_mode="HTML")
 
 
-@router.callback_query(F.data.startswith("withdraw:approve:"))
+@router.callback_query(F.data.regexp(r"^(withdraw|wd):approve:\d+$"))
 async def approve_withdrawal(callback: CallbackQuery) -> None:
     if not is_admin(callback.from_user.id):
         await callback.answer("Только для администратора", show_alert=True)
         return
 
     wr_id = int(callback.data.split(":")[2])
-    from db.models import WithdrawalRequest, WithdrawStatus
-    from datetime import datetime, timezone
+    from bot.services.withdrawal_service import admin_approve_withdrawal
 
-    async with AsyncSessionLocal() as session:
-        result = await session.execute(
-            select(WithdrawalRequest).where(WithdrawalRequest.id == wr_id)
+    try:
+        async with AsyncSessionLocal() as session:
+            await admin_approve_withdrawal(session, wr_id)
+        await callback.message.edit_reply_markup(reply_markup=None)
+        await callback.message.answer(
+            f"✅ Заявка #{wr_id} отмечена как <b>выплачена</b>. Пользователь уведомлён.",
+            parse_mode="HTML",
         )
-        wr = result.scalar_one_or_none()
-        if not wr or wr.status != WithdrawStatus.PENDING:
-            await callback.answer("Заявка уже обработана", show_alert=True)
-            return
-
-        wr.status = WithdrawStatus.PAID
-        wr.processed_at = datetime.now(timezone.utc)
-        await session.commit()
-
-        # Уведомляем пользователя
-        user_result = await session.execute(select(User).where(User.id == wr.user_id))
-        user = user_result.scalar_one_or_none()
-
-    await callback.message.edit_reply_markup(reply_markup=None)
-    await callback.message.answer(
-        f"✅ Заявка #{wr_id} отмечена как <b>выплачена</b>.",
-        parse_mode="HTML",
-    )
-
-    if user:
-        try:
-            from aiogram import Bot as _Bot
-            from bot.config import settings as _s
-            from bot.main import bot as tg_bot
-            await tg_bot.send_message(
-                user.telegram_id,
-                f"✅ <b>Вывод #{wr_id} выплачен!</b>\n\n"
-                f"💰 {wr.amount_coins:,.0f} монет отправлено на кошелёк:\n"
-                f"<code>{wr.wallet_address}</code>\n"
-                f"🌐 Сеть: {wr.network.upper()}",
-                parse_mode="HTML",
-            )
-        except Exception as e:
-            logger.warning(f"Failed to notify user about withdrawal: {e}")
-
+    except ValueError as e:
+        await callback.answer(str(e), show_alert=True)
     await callback.answer()
 
 
-@router.callback_query(F.data.startswith("withdraw:reject:"))
-async def reject_withdrawal(callback: CallbackQuery) -> None:
+@router.callback_query(F.data.regexp(r"^(withdraw|wd):reject:\d+$"))
+async def reject_withdrawal(callback: CallbackQuery, state: FSMContext) -> None:
     if not is_admin(callback.from_user.id):
         await callback.answer("Только для администратора", show_alert=True)
         return
 
     wr_id = int(callback.data.split(":")[2])
-    from db.models import WithdrawalRequest, WithdrawStatus
-    from datetime import datetime, timezone
-
-    async with AsyncSessionLocal() as session:
-        result = await session.execute(
-            select(WithdrawalRequest).where(WithdrawalRequest.id == wr_id)
-        )
-        wr = result.scalar_one_or_none()
-        if not wr or wr.status != WithdrawStatus.PENDING:
-            await callback.answer("Заявка уже обработана", show_alert=True)
-            return
-
-        # Вернуть монеты пользователю
-        user_result = await session.execute(select(User).where(User.id == wr.user_id))
-        user = user_result.scalar_one_or_none()
-        if user:
-            balance_before = user.balance_rub
-            user.balance_rub += wr.amount_coins
-            session.add(Transaction(
-                user_id=user.id,
-                type=TransactionType.BONUS,
-                amount_rub=wr.amount_coins,
-                balance_before=balance_before,
-                balance_after=user.balance_rub,
-                description=f"Возврат по заявке на вывод #{wr_id}",
-            ))
-
-        wr.status = WithdrawStatus.REJECTED
-        wr.processed_at = datetime.now(timezone.utc)
-        await session.commit()
-
-    await callback.message.edit_reply_markup(reply_markup=None)
+    await state.update_data(reject_wd_id=wr_id)
+    await state.set_state("wd_reject_reason")
     await callback.message.answer(
-        f"❌ Заявка #{wr_id} <b>отклонена</b>. Монеты возвращены пользователю.",
-        parse_mode="HTML",
+        f"Введи причину отклонения заявки #{wr_id} (отправится пользователю):"
     )
-
-    if user:
-        try:
-            from bot.main import bot as tg_bot
-            await tg_bot.send_message(
-                user.telegram_id,
-                f"❌ <b>Заявка на вывод #{wr_id} отклонена</b>.\n"
-                f"💰 {wr.amount_coins:,.0f} монет возвращены на баланс.\n\n"
-                f"По вопросам обращайся в поддержку.",
-                parse_mode="HTML",
-            )
-        except Exception as e:
-            logger.warning(f"Failed to notify user about rejection: {e}")
-
     await callback.answer()
+
+
+@router.message(StateFilter("wd_reject_reason"))
+async def reject_withdrawal_reason(message: Message, state: FSMContext) -> None:
+    if not is_admin(message.from_user.id):
+        return
+    data = await state.get_data()
+    wr_id = data.get("reject_wd_id")
+    if not wr_id:
+        await state.clear()
+        return
+    reason = message.text.strip() if message.text else "Без причины"
+    await state.clear()
+
+    from bot.services.withdrawal_service import admin_reject_withdrawal
+    try:
+        async with AsyncSessionLocal() as session:
+            await admin_reject_withdrawal(session, wr_id, reason)
+        await message.answer(
+            f"❌ Заявка #{wr_id} <b>отклонена</b>. Монеты возвращены, пользователь уведомлён.",
+            parse_mode="HTML",
+        )
+    except ValueError as e:
+        await message.answer(f"Ошибка: {e}")

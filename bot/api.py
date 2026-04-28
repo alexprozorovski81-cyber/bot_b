@@ -44,6 +44,19 @@ app.add_middleware(
 )
 
 
+@app.get("/health")
+async def healthcheck():
+    """Healthcheck для мониторинга и load balancer."""
+    from db.database import engine
+    try:
+        async with engine.connect() as conn:
+            await conn.execute(__import__("sqlalchemy").text("SELECT 1"))
+        db_ok = True
+    except Exception:
+        db_ok = False
+    return {"status": "ok" if db_ok else "degraded", "db": db_ok}
+
+
 # ----- Аутентификация через Telegram WebApp -----
 
 def validate_init_data(init_data: str) -> dict:
@@ -353,7 +366,7 @@ async def bet_place(
     try:
         bet = await place_bet(
             session,
-            user,
+            user.id,
             body.event_id,
             body.outcome_id,
             Decimal(str(body.amount_rub)),
@@ -412,13 +425,13 @@ async def my_bets(
 
 # ── TON / USDT депозит ──────────────────────────────────────────────────────
 
-USDT_TO_RUB = settings.usdt_to_rub_rate
-
 
 @app.get("/api/deposit/ton/rate")
 async def ton_rate():
     """Текущий курс USDT/RUB для отображения в Mini App."""
-    return {"rate_rub": float(USDT_TO_RUB), "usdt_wallet": settings.usdt_wallet_address}
+    from bot.services.rate_service import get_usdt_rub_rate
+    rate = await get_usdt_rub_rate()
+    return {"rate_rub": float(rate), "usdt_wallet": settings.usdt_wallet_address}
 
 
 class TonDepositInitRequest(BaseModel):
@@ -442,7 +455,9 @@ async def ton_deposit_init(
         first_name=tg_user.get("first_name"),
     )
 
-    amount_rub = Decimal(str(body.amount_usdt)) * USDT_TO_RUB
+    from bot.services.rate_service import get_usdt_rub_rate
+    rate = await get_usdt_rub_rate()
+    amount_rub = (Decimal(str(body.amount_usdt)) * rate).quantize(Decimal("0.01"))
 
     payment = Payment(
         user_id=user.id,
@@ -637,16 +652,14 @@ async def withdraw_request(
     tg_user: Annotated[dict, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_db)],
 ):
-    """Создаёт заявку на вывод. Монеты списываются сразу — на хранение."""
+    """Создаёт заявку на вывод с анти-фрод проверками. Монеты списываются сразу."""
+    from bot.services.withdrawal_service import create_withdrawal, WithdrawError
+
     valid_networks = {"usdt_ton", "eth", "btc", "sol"}
     if body.network not in valid_networks:
         raise HTTPException(400, f"Сеть должна быть одной из: {', '.join(valid_networks)}")
     if not body.wallet_address or len(body.wallet_address) < 10:
         raise HTTPException(400, "Некорректный адрес кошелька")
-
-    amount = Decimal(str(body.amount_coins))
-    if amount < settings.min_withdraw_coins:
-        raise HTTPException(400, f"Минимальный вывод: {settings.min_withdraw_coins:.0f} монет")
 
     user, _ = await get_or_create_user(
         session,
@@ -655,52 +668,24 @@ async def withdraw_request(
         first_name=tg_user.get("first_name"),
     )
 
-    if user.balance_rub < amount:
-        raise HTTPException(400, "Недостаточно монет на балансе")
-
-    balance_before = user.balance_rub
-    user.balance_rub -= amount
-
-    withdrawal = WithdrawalRequest(
-        user_id=user.id,
-        amount_coins=amount,
-        network=body.network,
-        wallet_address=body.wallet_address,
-        status=WithdrawStatus.PENDING,
-    )
-    session.add(withdrawal)
-
-    tx = Transaction(
-        user_id=user.id,
-        type=TransactionType.WITHDRAW,
-        amount_rub=amount,
-        balance_before=balance_before,
-        balance_after=user.balance_rub,
-        description=f"Заявка на вывод ({body.network})",
-    )
-    session.add(tx)
-    await session.commit()
-    await session.refresh(withdrawal)
-
-    # Уведомить всех администраторов
     try:
-        from bot.notifier import notify_admins
-        await notify_admins(
-            f"💸 Новая заявка на вывод #{withdrawal.id}\n"
-            f"Пользователь: {user.first_name or ''} @{user.username or ''} (ID {user.telegram_id})\n"
-            f"Сумма: {amount:,.0f} монет\n"
-            f"Сеть: {body.network}\n"
-            f"Кошелёк: {body.wallet_address}\n\n"
-            f"Используй /withdrawals в боте."
+        withdrawal = await create_withdrawal(
+            session,
+            user,
+            Decimal(str(body.amount_coins)),
+            body.network,
+            body.wallet_address,
         )
-    except Exception as e:
-        logger.warning("Failed to notify admins about withdrawal: %s", e)
+    except WithdrawError as e:
+        raise HTTPException(400, str(e))
 
+    await session.refresh(user)
     return {
         "id": withdrawal.id,
-        "amount_coins": float(amount),
-        "network": body.network,
-        "wallet_address": body.wallet_address,
+        "amount_coins": float(withdrawal.amount_coins),
+        "amount_usdt": float(withdrawal.amount_usdt or 0),
+        "network": withdrawal.network,
+        "wallet_address": withdrawal.wallet_address,
         "status": withdrawal.status.value,
         "created_at": withdrawal.created_at.isoformat(),
         "new_balance": float(user.balance_rub),
@@ -732,15 +717,30 @@ async def withdraw_status(
         {
             "id": w.id,
             "amount_coins": float(w.amount_coins),
+            "amount_usdt": float(w.amount_usdt or 0),
             "network": w.network,
             "wallet_address": w.wallet_address,
             "status": w.status.value,
+            "tx_hash": w.tx_hash,
             "admin_note": w.admin_note,
             "created_at": w.created_at.isoformat(),
             "processed_at": w.processed_at.isoformat() if w.processed_at else None,
         }
         for w in withdrawals
     ]
+
+
+@app.get("/api/withdraw/info")
+async def withdraw_info(tg_user: Annotated[dict, Depends(get_current_user)]):
+    """Актуальный курс и лимиты для формы вывода."""
+    from bot.services.rate_service import get_usdt_rub_rate
+    rate = await get_usdt_rub_rate()
+    return {
+        "rate_rub": float(rate),
+        "min_withdraw_coins": float(settings.min_withdraw_coins),
+        "auto_enabled": settings.withdraw_auto_enabled,
+        "cooldown_h": settings.withdraw_cooldown_h,
+    }
 
 
 # ── Ачивки ────────────────────────────────────────────────────────────────────

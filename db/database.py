@@ -19,6 +19,11 @@ AsyncSessionLocal = async_sessionmaker(
 )
 
 
+def is_sqlite() -> bool:
+    """True если используется SQLite (не поддерживает SELECT FOR UPDATE)."""
+    return settings.database_url.startswith("sqlite")
+
+
 async def get_session() -> AsyncSession:
     """Получить сессию (использовать как async context manager)."""
     return AsyncSessionLocal()

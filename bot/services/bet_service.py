@@ -8,6 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from bot.services import market_engine
+from db.database import is_sqlite
 from db.models import (
     Bet, Event, EventStatus, Outcome,
     Transaction, TransactionType, User,
@@ -69,9 +70,9 @@ async def quote_bet(
     # Текущий коэф (до сделки)
     current_odds = market_engine.get_odds(q, b)[outcome_index]
 
-    # Эффективный коэф = amount / shares (с учётом slippage)
-    if shares > 0:
-        avg_odds = (Decimal("1") / (amount_rub / shares)).quantize(Decimal("0.0001"))
+    # Эффективный коэф = shares / amount (с учётом slippage)
+    if amount_rub > 0 and shares > 0:
+        avg_odds = (shares / amount_rub).quantize(Decimal("0.0001"))
     else:
         avg_odds = Decimal("0")
 
@@ -94,27 +95,38 @@ async def quote_bet(
 
 async def place_bet(
     session: AsyncSession,
-    user: User,
+    user_id: int,
     event_id: int,
     outcome_id: int,
     amount_rub: Decimal,
 ) -> Bet:
     """
     Размещение ставки атомарно:
-      1. Проверяем баланс
-      2. Считаем котировку
-      3. Списываем средства
-      4. Обновляем shares_outstanding исхода
-      5. Создаём Bet и Transaction
+      1. Блокируем строку пользователя (SELECT FOR UPDATE на PostgreSQL)
+      2. Проверяем баланс
+      3. Считаем котировку
+      4. Списываем средства
+      5. Обновляем shares_outstanding исхода
+      6. Создаём Bet и Transaction
 
     Всё внутри одной транзакции БД.
     """
     if amount_rub < Decimal("10"):
-        raise BetError("Минимальная ставка — 10 ₽")
+        raise BetError("Минимальная ставка — 10 монет")
+
+    # Блокируем строку пользователя чтобы исключить race condition при
+    # параллельных ставках. SELECT FOR UPDATE не поддерживается SQLite.
+    user_q = select(User).where(User.id == user_id)
+    if not is_sqlite():
+        user_q = user_q.with_for_update()
+    user_result = await session.execute(user_q)
+    user = user_result.scalar_one_or_none()
+    if not user:
+        raise BetError("Пользователь не найден")
 
     if user.balance_rub < amount_rub:
         raise BetError(
-            f"Недостаточно средств. На балансе: {user.balance_rub} ₽"
+            f"Недостаточно средств. На балансе: {user.balance_rub:.2f} монет"
         )
 
     quote = await quote_bet(session, event_id, outcome_id, amount_rub)

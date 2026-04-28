@@ -574,7 +574,9 @@ async function loadProfile() {
 // ═══════════════════════════════════════
 // Модалка вывода
 // ═══════════════════════════════════════
-window.openWithdrawModal = function() {
+let _withdrawRate = null;
+
+window.openWithdrawModal = async function() {
     const modal = document.getElementById('withdraw-modal');
     if (!modal) return;
     document.getElementById('withdraw-amount').value = '';
@@ -583,7 +585,29 @@ window.openWithdrawModal = function() {
     const err = modal.querySelector('.withdraw-error');
     if (err) err.textContent = '';
     modal.hidden = false;
+
+    // Загружаем актуальный курс
+    try {
+        const info = await api.withdrawInfo();
+        _withdrawRate = info.rate_rub;
+        const rateEl = document.getElementById('withdraw-rate-info');
+        if (rateEl) rateEl.textContent = `Курс: 1 USDT ≈ ${_withdrawRate.toFixed(0)} монет`;
+        _updateWithdrawConversion();
+    } catch (_) {}
 };
+
+function _updateWithdrawConversion() {
+    const amountEl = document.getElementById('withdraw-amount');
+    const convEl = document.getElementById('withdraw-usdt-preview');
+    if (!convEl || !amountEl) return;
+    const coins = parseFloat(amountEl.value) || 0;
+    if (_withdrawRate && coins > 0) {
+        const usdt = (coins / _withdrawRate).toFixed(2);
+        convEl.textContent = `≈ ${usdt} USDT`;
+    } else {
+        convEl.textContent = '';
+    }
+}
 
 window.closeWithdrawModal = function() {
     const modal = document.getElementById('withdraw-modal');
@@ -598,7 +622,7 @@ window.submitWithdraw = async function() {
     const btn = document.getElementById('withdraw-submit-btn');
 
     if (!amount || amount < 100) { errEl.textContent = 'Минимум 100 монет'; return; }
-    if (!wallet) { errEl.textContent = 'Введи адрес кошелька'; return; }
+    if (!wallet || wallet.length < 10) { errEl.textContent = 'Введи корректный адрес кошелька'; return; }
     if (state.me && amount > state.me.balance_rub) { errEl.textContent = 'Недостаточно монет'; return; }
 
     btn.disabled = true;
@@ -610,7 +634,8 @@ window.submitWithdraw = async function() {
         state.me.balance_rub = result.new_balance;
         renderBalance();
         closeWithdrawModal();
-        toast(`✅ Заявка #${result.id} создана. Ожидай подтверждения.`, 'success');
+        const usdtInfo = result.amount_usdt > 0 ? ` (~${result.amount_usdt.toFixed(2)} USDT)` : '';
+        toast(`✅ Заявка #${result.id} создана${usdtInfo}. Ожидай подтверждения.`, 'success');
     } catch (e) {
         errEl.textContent = e.message || 'Ошибка. Попробуй снова.';
     } finally {

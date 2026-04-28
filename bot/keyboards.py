@@ -23,6 +23,7 @@ def main_menu_kb() -> ReplyKeyboardMarkup:
             [
                 KeyboardButton(text=texts.BTN_PROFILE),
                 KeyboardButton(text=texts.BTN_DEPOSIT),
+                KeyboardButton(text=texts.BTN_WITHDRAW),
             ],
             [
                 KeyboardButton(text=texts.BTN_ABOUT),

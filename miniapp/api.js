@@ -67,5 +67,6 @@ const api = {
             body: JSON.stringify({ amount_coins, network, wallet_address }),
         }),
     withdrawStatus: () => apiRequest('/api/withdraw/status'),
+    withdrawInfo: () => apiRequest('/api/withdraw/info'),
     achievements: () => apiRequest('/api/me/achievements'),
 };

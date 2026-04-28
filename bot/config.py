@@ -61,6 +61,14 @@ class Settings(BaseSettings):
     min_withdraw_coins: Decimal = Decimal("100")  # минимальная сумма вывода
     support_username: str = "support"
 
+    # TON горячий кошелёк (для авто-вывода USDT)
+    ton_hot_wallet_mnemonic: str = ""   # 24 слова через пробел
+    withdraw_auto_enabled: bool = False  # включить авто-вывод через TON SDK
+    withdraw_max_auto_usdt: Decimal = Decimal("500")  # макс. сумма авто-вывода за раз
+    withdraw_daily_limit_usdt: Decimal = Decimal("2000")  # дневной лимит авто-вывода
+    withdraw_min_settled_bets: int = 1   # мин. разрешённых ставок для вывода
+    withdraw_cooldown_h: int = 24        # минимум часов между выводами
+
     # Claude API (для авто-генерации вопросов из новостей)
     anthropic_api_key: str = ""
 
@@ -71,3 +79,14 @@ class Settings(BaseSettings):
 
 
 settings = Settings()  # type: ignore[call-arg]
+
+# Startup validation — fail fast if critical env vars are missing
+if not settings.bot_token:
+    raise RuntimeError("BOT_TOKEN is not set. Copy .env.example → .env and fill in the values.")
+if not settings.admin_ids:
+    raise RuntimeError("ADMIN_IDS is not set. Set comma-separated Telegram user IDs of admins.")
+if settings.api_secret_key == "dev-secret-change-in-production":
+    import logging as _logging
+    _logging.getLogger(__name__).warning(
+        "API_SECRET_KEY is using the default dev value — change it in production!"
+    )
