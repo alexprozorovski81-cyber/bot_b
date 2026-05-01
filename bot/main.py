@@ -263,9 +263,18 @@ async def _run_news_scan() -> None:
 
 async def init_database() -> None:
     """Создаёт таблицы и заполняет начальными данными если БД пустая."""
-    from db.database import engine, AsyncSessionLocal, is_sqlite, is_postgres
+    from db.database import engine, AsyncSessionLocal
     from db.models import Base
     from sqlalchemy import text
+
+    # Совместимость со старыми версиями db/database.py
+    try:
+        from db.database import is_sqlite, is_postgres
+    except ImportError:
+        def is_sqlite() -> bool:
+            return settings.database_url.startswith("sqlite")
+        def is_postgres() -> bool:
+            return settings.database_url.startswith("postgresql")
 
     db_url = settings.database_url
     logger.info(f"Database URL: {db_url}")
