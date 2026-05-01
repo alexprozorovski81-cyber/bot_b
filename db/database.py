@@ -24,6 +24,11 @@ def is_sqlite() -> bool:
     return settings.database_url.startswith("sqlite")
 
 
+def is_postgres() -> bool:
+    """True если используется PostgreSQL."""
+    return settings.database_url.startswith("postgresql")
+
+
 async def get_session() -> AsyncSession:
     """Получить сессию (использовать как async context manager)."""
     return AsyncSessionLocal()
