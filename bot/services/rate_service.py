@@ -16,18 +16,33 @@ from bot.config import settings
 logger = logging.getLogger(__name__)
 
 _cached_rate: Decimal | None = None
-_cache_ts: float = 0.0
-_CACHE_TTL = 900  # 15 минут
+_cache_ts: float = 0.0          # время последнего успешного обновления
+_last_attempt_ts: float = 0.0   # время любой последней попытки
+_CACHE_TTL = 900       # 15 мин — обновляем успешный кэш
+_RETRY_AFTER = 120     # 2 мин — минимум между попытками при ошибках
 
 
 async def get_usdt_rub_rate() -> Decimal:
-    """Возвращает актуальный курс 1 USDT → RUB с кэшированием 15 мин."""
-    global _cached_rate, _cache_ts
+    """Возвращает актуальный курс 1 USDT → RUB с кэшированием 15 мин.
+
+    При ошибке CoinGecko повторная попытка не ранее чем через 2 минуты,
+    чтобы не спамить API и не получать 429.
+    """
+    global _cached_rate, _cache_ts, _last_attempt_ts
 
     now = time.monotonic()
+
+    # Кэш свежий — отдаём без запроса
     if _cached_rate is not None and (now - _cache_ts) < _CACHE_TTL:
         return _cached_rate
 
+    # Слишком рано после последней (возможно неудачной) попытки — ждём
+    if (now - _last_attempt_ts) < _RETRY_AFTER:
+        if _cached_rate is not None:
+            return _cached_rate
+        return settings.usdt_to_rub_rate
+
+    _last_attempt_ts = now
     rate = await _fetch_coingecko()
     if rate:
         _cached_rate = rate
