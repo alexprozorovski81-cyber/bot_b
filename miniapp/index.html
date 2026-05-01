@@ -4,6 +4,9 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <title>PredictBet — Рынок предсказаний</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <script src="https://unpkg.com/@tonconnect/ui@2.0.6/dist/tonconnect-ui.min.js"></script>
     <script src="https://unpkg.com/tonweb@0.0.62/dist/tonweb.js"></script>
@@ -19,10 +22,13 @@
                     <span class="logo-mark">◈</span>
                     <span class="logo-text">PredictBet</span>
                 </div>
-                <button class="balance-pill" id="balance-pill">
-                    <span class="balance-label">Баланс</span>
-                    <span class="balance-amount" id="balance">— ₽</span>
-                </button>
+                <div class="header-right">
+                    <button class="theme-toggle" id="theme-toggle" title="Сменить тему">🌙</button>
+                    <button class="balance-pill" id="balance-pill">
+                        <span class="balance-label">Баланс</span>
+                        <span class="balance-amount" id="balance">— ₽</span>
+                    </button>
+                </div>
             </div>
             <div class="header-search">
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -40,13 +46,47 @@
             </button>
         </nav>
 
-        <!-- Лента событий -->
-        <main class="events-feed" id="events-feed">
-            <div class="loading">
-                <div class="spinner"></div>
-                <p>Загружаем события...</p>
+        <!-- Timeframe tabs -->
+        <div class="timeframe-tabs" id="timeframe-tabs">
+            <button class="timeframe-tab active" data-timeframe="">🗂 Все</button>
+            <button class="timeframe-tab" data-timeframe="intraday">⚡ Сейчас</button>
+            <button class="timeframe-tab" data-timeframe="daily">📅 Сегодня</button>
+            <button class="timeframe-tab" data-timeframe="weekly">📆 Неделя</button>
+            <button class="timeframe-tab" data-timeframe="longterm">🏦 Долгосрок</button>
+        </div>
+
+        <!-- Главный экран рынков -->
+        <div id="markets-screen">
+            <!-- Activity ticker -->
+            <div class="activity-ticker" id="activity-ticker" style="display:none">
+                <div class="activity-ticker-label">🔥 Последние ставки</div>
+                <div class="activity-ticker-scroll" id="activity-ticker-scroll"></div>
             </div>
-        </main>
+
+            <!-- Лента событий -->
+            <main class="events-feed" id="events-feed">
+                <div class="loading">
+                    <div class="spinner"></div>
+                    <p>Загружаем события...</p>
+                </div>
+            </main>
+        </div>
+
+        <!-- Лидерборд -->
+        <div id="leaderboard-screen" hidden>
+            <div style="padding: 16px 0 8px">
+                <div style="font-size:20px;font-weight:800;color:var(--text);margin-bottom:4px">🏆 Лидерборд</div>
+                <div style="font-size:13px;color:var(--text-muted)">Топ-20 по прибыли</div>
+            </div>
+            <div class="leaderboard-period-tabs" id="leaderboard-period-tabs">
+                <button class="leaderboard-period-tab active" data-period="week">Неделя</button>
+                <button class="leaderboard-period-tab" data-period="month">Месяц</button>
+                <button class="leaderboard-period-tab" data-period="all">Всё время</button>
+            </div>
+            <div class="leaderboard-list" id="leaderboard-list">
+                <div class="loading"><div class="spinner"></div></div>
+            </div>
+        </div>
 
         <!-- Bottom navigation -->
         <nav class="bottom-nav">
@@ -71,30 +111,45 @@
                 </svg>
                 <span>Профиль</span>
             </button>
+            <button class="nav-btn" data-tab="leaderboard">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6"></path>
+                    <path d="M18 9h1.5a2.5 2.5 0 0 0 0-5H18"></path>
+                    <path d="M4 22h16"></path>
+                    <path d="M10 14.66V17c0 .55-.47.98-.97 1.21C7.85 18.75 7 20.24 7 22"></path>
+                    <path d="M14 14.66V17c0 .55.47.98.97 1.21C16.15 18.75 17 20.24 17 22"></path>
+                    <path d="M18 2H6v7a6 6 0 0 0 12 0V2Z"></path>
+                </svg>
+                <span>Топ</span>
+            </button>
         </nav>
     </div>
 
-    <!-- Шаблон карточки события -->
+    <!-- Шаблон карточки события (Polymarket style) -->
     <template id="event-card-template">
         <article class="event-card">
-            <div class="event-header">
-                <div class="event-image"></div>
-                <div class="event-info">
-                    <h3 class="event-title"></h3>
-                    <div class="event-meta">
-                        <span class="event-volume"></span>
-                        <span class="event-deadline"></span>
-                    </div>
+            <!-- Photo / emoji banner -->
+            <div class="event-card-photo-wrap" style="position:relative">
+                <!-- filled by JS: either <img class="event-card-photo"> or placeholder div -->
+            </div>
+            <!-- Card body -->
+            <div class="event-card-body">
+                <h3 class="event-title"></h3>
+                <div class="event-meta">
+                    <span class="event-volume"></span>
+                    <span class="event-deadline"></span>
                 </div>
             </div>
-            <div class="event-outcomes"></div>
+            <!-- YES / NO footer buttons -->
+            <div class="event-card-footer"></div>
         </article>
     </template>
 
-    <!-- Модалка ставки -->
+    <!-- Bottom sheet: ставка -->
     <div class="bet-modal" id="bet-modal" hidden>
         <div class="bet-modal-backdrop"></div>
-        <div class="bet-modal-content">
+        <div class="bottom-sheet-content">
+            <div class="bottom-sheet-handle"></div>
             <button class="bet-modal-close" id="bet-modal-close">&times;</button>
             <div class="bet-modal-event-title" id="bet-event-title"></div>
             <div class="bet-modal-outcome" id="bet-outcome">
@@ -109,10 +164,11 @@
                     <span class="amount-currency">₽</span>
                 </div>
                 <div class="amount-quick">
+                    <button data-amount="50">50</button>
                     <button data-amount="100">100</button>
                     <button data-amount="500">500</button>
-                    <button data-amount="1000">1 000</button>
-                    <button data-amount="5000">5 000</button>
+                    <button data-amount="1000">1K</button>
+                    <button data-amount="max">MAX</button>
                 </div>
             </div>
 
@@ -140,12 +196,12 @@
     <!-- Депозит-модалка (TON Connect) -->
     <div class="bet-modal" id="deposit-modal" hidden>
         <div class="bet-modal-backdrop" onclick="closeDepositModal()"></div>
-        <div class="bet-modal-content">
+        <div class="bottom-sheet-content">
+            <div class="bottom-sheet-handle"></div>
             <button class="bet-modal-close" onclick="closeDepositModal()">&times;</button>
             <div style="font-size:17px;font-weight:700;margin-bottom:4px">💎 Пополнить USDT</div>
             <div id="deposit-rate" style="font-size:13px;color:var(--text-muted);margin-bottom:16px">Загружаем курс...</div>
 
-            <!-- Кнопка TON Connect -->
             <div id="deposit-disconnected">
                 <p style="font-size:13px;color:var(--text-muted);margin-bottom:12px">
                     Подключи TON-кошелёк чтобы пополнить баланс через USDT
@@ -153,14 +209,12 @@
                 <div id="ton-connect-button"></div>
             </div>
 
-            <!-- После подключения -->
             <div id="deposit-connected" hidden>
                 <div style="font-size:12px;color:var(--text-muted);margin-bottom:12px">
                     Кошелёк: <span id="deposit-wallet-addr" style="font-family:'JetBrains Mono';color:var(--text)"></span>
                 </div>
             </div>
 
-            <!-- Форма суммы -->
             <div id="deposit-amount-section" hidden>
                 <label style="font-size:13px;color:var(--text-muted);display:block;margin-bottom:6px">Сумма в USDT</label>
                 <div class="amount-input-wrap">
@@ -192,7 +246,8 @@
     <!-- Модалка вывода -->
     <div class="bet-modal" id="withdraw-modal" hidden>
         <div class="bet-modal-backdrop" onclick="closeWithdrawModal()"></div>
-        <div class="bet-modal-content">
+        <div class="bottom-sheet-content">
+            <div class="bottom-sheet-handle"></div>
             <button class="bet-modal-close" onclick="closeWithdrawModal()">&times;</button>
             <div style="font-size:17px;font-weight:700;margin-bottom:4px">💸 Вывод монет</div>
             <div id="withdraw-rate-info" style="font-size:13px;color:var(--text-muted);margin-bottom:16px">

@@ -24,6 +24,8 @@ from bot.services.oracle_service import check_oracles
 from bot.services.news_service import fetch_news_suggestions, fetch_cbr_rate
 from bot.services.auto_events_service import process_auto_events
 from bot.services.withdrawal_service import process_pending_withdrawals
+from bot.services.crypto_events_generator import generate_short_term_events
+from bot.services.leaderboard_service import refresh_user_stats
 
 
 logging.basicConfig(
@@ -90,16 +92,21 @@ async def run_api() -> None:
 
 async def run_cron() -> None:
     """
-    Cron-задачи:
-    - авто-выводы каждые 2 мин
-    - оракулы каждые 10 мин (5 тиков по 2 мин)
+    Cron-задачи (тик каждые 2 мин):
+    - авто-выводы каждые 2 мин (каждый тик)
+    - оракулы каждые 2 мин (каждый тик — нужно для intraday событий)
+    - USDT депозиты каждые 10 мин (5 тиков)
+    - leaderboard каждые 10 мин (5 тиков)
+    - short-term crypto события каждые 30 мин (15 тиков)
     - новости + авто-события каждые 30 мин (15 тиков)
     """
-    logger.info("Cron task started (withdrawals every 2min, oracles every 10min, news every 30min)")
+    logger.info("Cron task started (2min tick)")
     await asyncio.sleep(15)  # Ждём пока бот запустится
 
     from db.database import AsyncSessionLocal
-    oracle_tick = 0
+    deposit_tick = 0
+    leaderboard_tick = 0
+    short_term_tick = 0
     news_tick = 0
 
     while True:
@@ -112,24 +119,47 @@ async def run_cron() -> None:
         except Exception as e:
             logger.exception(f"Cron withdrawal error: {e}")
 
-        # -- Проверяем pending USDT депозиты (каждые 10 мин = 5 тиков) --
-        oracle_tick += 1
-        if oracle_tick >= 5:
-            oracle_tick = 0
-            try:
-                resolved = await check_oracles()
-                if resolved > 0:
-                    logger.info(f"Cron: resolved {resolved} events via oracles")
-            except Exception as e:
-                logger.exception(f"Cron oracle error: {e}")
+        # -- Оракулы (каждый тик = каждые 2 мин, для intraday событий) --
+        try:
+            resolved = await check_oracles()
+            if resolved > 0:
+                logger.info(f"Cron: resolved {resolved} events via oracles")
+        except Exception as e:
+            logger.exception(f"Cron oracle error: {e}")
 
-            # Проверяем pending USDT-депозиты старше 5 мин
+        # -- USDT депозиты (каждые 10 мин = 5 тиков) --
+        deposit_tick += 1
+        if deposit_tick >= 5:
+            deposit_tick = 0
             try:
                 await _check_pending_deposits()
             except Exception as e:
                 logger.exception(f"Cron deposit check error: {e}")
 
-        # -- Новости + авто-события (каждые 30 мин = 15 тиков по 2 мин) --
+        # -- Leaderboard (каждые 10 мин = 5 тиков) --
+        leaderboard_tick += 1
+        if leaderboard_tick >= 5:
+            leaderboard_tick = 0
+            try:
+                async with AsyncSessionLocal() as session:
+                    n = await refresh_user_stats(session)
+                    logger.debug(f"Cron: leaderboard refreshed ({n} rows)")
+            except Exception as e:
+                logger.exception(f"Cron leaderboard error: {e}")
+
+        # -- Short-term crypto события (каждые 30 мин = 15 тиков) --
+        short_term_tick += 1
+        if short_term_tick >= 15:
+            short_term_tick = 0
+            try:
+                async with AsyncSessionLocal() as session:
+                    n = await generate_short_term_events(session)
+                    if n > 0:
+                        logger.info(f"Cron: generated {n} short-term crypto events")
+            except Exception as e:
+                logger.exception(f"Cron short-term events error: {e}")
+
+        # -- Новости + авто-события (каждые 30 мин = 15 тиков) --
         news_tick += 1
         if news_tick >= 15:
             news_tick = 0
@@ -233,17 +263,15 @@ async def _run_news_scan() -> None:
 
 async def init_database() -> None:
     """Создаёт таблицы и заполняет начальными данными если БД пустая."""
-    from db.database import engine, AsyncSessionLocal
+    from db.database import engine, AsyncSessionLocal, is_sqlite, is_postgres
     from db.models import Base
     from sqlalchemy import text
 
-    # Логируем фактический путь к БД — критично для диагностики персистентности
-    # на хостингах (Amvera persistenceMount=/data). Если URL не указывает на /data,
-    # данные потеряются при рестарте контейнера.
     db_url = settings.database_url
     logger.info(f"Database URL: {db_url}")
-    if db_url.startswith("sqlite"):
-        # Достаём путь файла из sqlite URL вида sqlite+aiosqlite:////data/predictbet.db
+
+    if is_sqlite():
+        # Логируем путь к файлу — критично для Amvera persistenceMount
         sqlite_path = db_url.split("://", 1)[-1].lstrip("/")
         sqlite_abs = "/" + sqlite_path if db_url.count("/") >= 4 else os.path.abspath(sqlite_path)
         logger.info(f"SQLite file resolved path: {sqlite_abs}")
@@ -253,58 +281,97 @@ async def init_database() -> None:
                 "стираться при рестарте! Установи DATABASE_URL=sqlite+aiosqlite:////data/predictbet.db"
             )
 
-    # Создаём таблицы (новые) и применяем inline-миграции для существующих
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+        # SQLite: create_all + inline-миграции для существующих БД
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
 
-        # Inline-миграции: добавляем колонки если их нет (SQLite не имеет IF NOT EXISTS)
-        migrations = [
-            "ALTER TABLE events ADD COLUMN article_url VARCHAR(512)",
-            # Withdrawals table — создаётся через create_all, но на случай старых БД
-            """CREATE TABLE IF NOT EXISTS withdrawals (
-                id INTEGER PRIMARY KEY,
-                user_id INTEGER NOT NULL REFERENCES users(id),
-                amount_coins NUMERIC(18,2) NOT NULL,
-                network VARCHAR(32) NOT NULL,
-                wallet_address VARCHAR(256) NOT NULL,
-                status VARCHAR(16) NOT NULL DEFAULT 'pending',
-                admin_note VARCHAR(512),
-                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                processed_at DATETIME
-            )""",
-            "CREATE INDEX IF NOT EXISTS ix_withdrawals_user_id ON withdrawals (user_id)",
-            "CREATE INDEX IF NOT EXISTS ix_withdrawals_status ON withdrawals (status)",
-            "ALTER TABLE withdrawals ADD COLUMN amount_usdt NUMERIC(18,6)",
-            "ALTER TABLE withdrawals ADD COLUMN rate_at_request NUMERIC(18,4)",
-            "ALTER TABLE withdrawals ADD COLUMN tx_hash VARCHAR(128)",
-            "ALTER TABLE withdrawals ADD COLUMN fee_coins NUMERIC(18,2) DEFAULT 0",
-            "ALTER TABLE withdrawals ADD COLUMN is_auto BOOLEAN DEFAULT 0",
-            "ALTER TABLE withdrawals ADD COLUMN retry_count INTEGER DEFAULT 0",
-            # Achievements
-            """CREATE TABLE IF NOT EXISTS achievements (
-                id INTEGER PRIMARY KEY,
-                slug VARCHAR(64) UNIQUE NOT NULL,
-                name VARCHAR(128) NOT NULL,
-                emoji VARCHAR(8) NOT NULL,
-                description VARCHAR(256) NOT NULL,
-                condition_type VARCHAR(32) NOT NULL,
-                condition_value INTEGER NOT NULL DEFAULT 1,
-                rarity VARCHAR(16) NOT NULL DEFAULT 'common'
-            )""",
-            """CREATE TABLE IF NOT EXISTS user_achievements (
-                id INTEGER PRIMARY KEY,
-                user_id INTEGER NOT NULL REFERENCES users(id),
-                achievement_id INTEGER NOT NULL REFERENCES achievements(id),
-                unlocked_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
-            )""",
-            "CREATE INDEX IF NOT EXISTS ix_user_achievements_user_id ON user_achievements (user_id)",
-        ]
-        for sql in migrations:
-            try:
-                await conn.execute(text(sql))
-                logger.info(f"Migration applied: {sql}")
-            except Exception:
-                pass  # Колонка уже существует — ок
+            migrations = [
+                "ALTER TABLE events ADD COLUMN article_url VARCHAR(512)",
+                """CREATE TABLE IF NOT EXISTS withdrawals (
+                    id INTEGER PRIMARY KEY,
+                    user_id INTEGER NOT NULL REFERENCES users(id),
+                    amount_coins NUMERIC(18,2) NOT NULL,
+                    network VARCHAR(32) NOT NULL,
+                    wallet_address VARCHAR(256) NOT NULL,
+                    status VARCHAR(16) NOT NULL DEFAULT 'pending',
+                    admin_note VARCHAR(512),
+                    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    processed_at DATETIME
+                )""",
+                "CREATE INDEX IF NOT EXISTS ix_withdrawals_user_id ON withdrawals (user_id)",
+                "CREATE INDEX IF NOT EXISTS ix_withdrawals_status ON withdrawals (status)",
+                "ALTER TABLE withdrawals ADD COLUMN amount_usdt NUMERIC(18,6)",
+                "ALTER TABLE withdrawals ADD COLUMN rate_at_request NUMERIC(18,4)",
+                "ALTER TABLE withdrawals ADD COLUMN tx_hash VARCHAR(128)",
+                "ALTER TABLE withdrawals ADD COLUMN fee_coins NUMERIC(18,2) DEFAULT 0",
+                "ALTER TABLE withdrawals ADD COLUMN is_auto BOOLEAN DEFAULT 0",
+                "ALTER TABLE withdrawals ADD COLUMN retry_count INTEGER DEFAULT 0",
+                """CREATE TABLE IF NOT EXISTS achievements (
+                    id INTEGER PRIMARY KEY,
+                    slug VARCHAR(64) UNIQUE NOT NULL,
+                    name VARCHAR(128) NOT NULL,
+                    emoji VARCHAR(8) NOT NULL,
+                    description VARCHAR(256) NOT NULL,
+                    condition_type VARCHAR(32) NOT NULL,
+                    condition_value INTEGER NOT NULL DEFAULT 1,
+                    rarity VARCHAR(16) NOT NULL DEFAULT 'common'
+                )""",
+                """CREATE TABLE IF NOT EXISTS user_achievements (
+                    id INTEGER PRIMARY KEY,
+                    user_id INTEGER NOT NULL REFERENCES users(id),
+                    achievement_id INTEGER NOT NULL REFERENCES achievements(id),
+                    unlocked_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )""",
+                "CREATE INDEX IF NOT EXISTS ix_user_achievements_user_id ON user_achievements (user_id)",
+                """CREATE TABLE IF NOT EXISTS registration_log (
+                    id INTEGER PRIMARY KEY,
+                    telegram_id INTEGER NOT NULL,
+                    ip_address VARCHAR(45),
+                    user_agent VARCHAR(500),
+                    fingerprint VARCHAR(64),
+                    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )""",
+                "CREATE INDEX IF NOT EXISTS ix_registration_log_ip ON registration_log (ip_address)",
+                "CREATE INDEX IF NOT EXISTS ix_registration_log_fp ON registration_log (fingerprint)",
+                # 0007: timeframe, auto_resolve_source, auto_resolve_payload on events
+                "ALTER TABLE events ADD COLUMN timeframe VARCHAR(16) NOT NULL DEFAULT 'longterm'",
+                "ALTER TABLE events ADD COLUMN auto_resolve_source VARCHAR(64)",
+                "ALTER TABLE events ADD COLUMN auto_resolve_payload TEXT",
+                "CREATE INDEX IF NOT EXISTS ix_events_timeframe_status ON events (timeframe, status)",
+                # 0007: user_stats table
+                """CREATE TABLE IF NOT EXISTS user_stats (
+                    id INTEGER PRIMARY KEY,
+                    user_id INTEGER NOT NULL REFERENCES users(id),
+                    period VARCHAR(8) NOT NULL,
+                    net_profit NUMERIC(18,2) NOT NULL DEFAULT 0,
+                    bets_count INTEGER NOT NULL DEFAULT 0,
+                    win_count INTEGER NOT NULL DEFAULT 0,
+                    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(user_id, period)
+                )""",
+                "CREATE INDEX IF NOT EXISTS ix_user_stats_user_id ON user_stats (user_id)",
+            ]
+            for sql in migrations:
+                try:
+                    await conn.execute(text(sql))
+                except Exception:
+                    pass  # Колонка/таблица уже существует — ок
+
+    elif is_postgres():
+        # PostgreSQL: применяем alembic-миграции
+        logger.info("PostgreSQL detected — running alembic upgrade head")
+        import asyncio as _asyncio
+        from alembic.config import Config as AlembicConfig
+        from alembic import command as alembic_command
+
+        alembic_cfg = AlembicConfig("alembic.ini")
+        alembic_cfg.set_main_option("sqlalchemy.url", db_url)
+
+        loop = _asyncio.get_event_loop()
+        await loop.run_in_executor(
+            None, alembic_command.upgrade, alembic_cfg, "head"
+        )
+        logger.info("Alembic migrations applied successfully")
 
     logger.info("Database schema ready")
 

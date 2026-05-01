@@ -7,12 +7,13 @@ import hashlib
 import hmac
 import json
 import logging
+import time
 from decimal import Decimal
 from pathlib import Path
 from typing import Annotated
 from urllib.parse import parse_qsl
 
-from fastapi import FastAPI, HTTPException, Header, Depends
+from fastapi import FastAPI, HTTPException, Header, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import select
@@ -28,7 +29,7 @@ from db.database import AsyncSessionLocal
 from db.models import (
     Category, Comment, Event, EventStatus, Outcome, Bet, User,
     Achievement, UserAchievement, WithdrawalRequest, WithdrawStatus,
-    Transaction, TransactionType, Payment, PaymentMethod,
+    Transaction, TransactionType, Payment, PaymentMethod, UserStats,
 )
 
 
@@ -38,7 +39,7 @@ app.include_router(webhooks_router)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=settings.cors_origins,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -93,6 +94,11 @@ def validate_init_data(init_data: str) -> dict:
         if not hmac.compare_digest(calculated_hash, received_hash):
             raise ValueError("Невалидный hash")
 
+        # Проверяем свежесть данных — не старше 1 часа
+        auth_date = int(parsed.get("auth_date", 0))
+        if auth_date == 0 or time.time() - auth_date > 3600:
+            raise ValueError("initData expired")
+
         user_json = parsed.get("user")
         if not user_json:
             raise ValueError("user отсутствует")
@@ -105,19 +111,36 @@ def validate_init_data(init_data: str) -> dict:
 
 
 async def get_current_user(
+    request: Request,
     x_telegram_init_data: Annotated[str | None, Header(alias="X-Telegram-Init-Data")] = None,
+    x_device_fingerprint: Annotated[str | None, Header(alias="X-Device-Fingerprint")] = None,
+    x_forwarded_for: Annotated[str | None, Header(alias="X-Forwarded-For")] = None,
 ) -> dict:
     """Зависимость FastAPI — текущий пользователь из заголовка."""
     if settings.dev_mode and not x_telegram_init_data:
-        return {"id": settings.dev_telegram_id, "first_name": "Dev", "username": "dev"}
+        return {
+            "id": settings.dev_telegram_id, "first_name": "Dev", "username": "dev",
+            "_ip": "127.0.0.1", "_fp": None,
+        }
     if not x_telegram_init_data:
         raise HTTPException(status_code=401, detail="Invalid initData")
-    return validate_init_data(x_telegram_init_data)
+    user_data = validate_init_data(x_telegram_init_data)
+    # Добавляем IP и fingerprint для anti-fraud
+    ip = (x_forwarded_for.split(",")[0].strip() if x_forwarded_for
+          else (request.client.host if request.client else None))
+    user_data["_ip"] = ip
+    user_data["_fp"] = x_device_fingerprint
+    return user_data
 
 
 async def get_db() -> AsyncSession:
     async with AsyncSessionLocal() as session:
         yield session
+
+
+def is_admin_user(tg_user: dict) -> bool:
+    """Проверяет, является ли пользователь Telegram администратором платформы."""
+    return int(tg_user.get("id", 0)) in settings.admin_id_list
 
 
 # ----- Эндпоинты -----
@@ -133,6 +156,8 @@ async def me(
         telegram_id=tg_user["id"],
         username=tg_user.get("username"),
         first_name=tg_user.get("first_name"),
+        ip=tg_user.get("_ip"),
+        fingerprint=tg_user.get("_fp"),
     )
     stats = await get_user_stats(session, user)
     return {
@@ -162,9 +187,11 @@ async def list_categories(session: Annotated[AsyncSession, Depends(get_db)]):
 async def list_events(
     session: Annotated[AsyncSession, Depends(get_db)],
     category: str | None = None,
+    timeframe: str | None = None,
     limit: int = 30,
 ):
     """Список активных событий с текущими коэффициентами."""
+    # MODERATION жёстко исключён — только ACTIVE видят пользователи
     query = select(Event).where(Event.status == EventStatus.ACTIVE)
     if category:
         cat_result = await session.execute(
@@ -173,6 +200,9 @@ async def list_events(
         cat = cat_result.scalar_one_or_none()
         if cat:
             query = query.where(Event.category_id == cat.id)
+
+    if timeframe:
+        query = query.where(Event.timeframe == timeframe)
 
     query = query.order_by(Event.closes_at).limit(limit)
     result = await session.execute(query)
@@ -211,6 +241,7 @@ async def list_events(
             "article_url": event.article_url,
             "closes_at": event.closes_at.isoformat(),
             "category_id": event.category_id,
+            "timeframe": event.timeframe,
             "volume_rub": float(volume),
             "players_count": players,
             "outcomes": [
@@ -230,11 +261,16 @@ async def list_events(
 async def get_event(
     event_id: int,
     session: Annotated[AsyncSession, Depends(get_db)],
+    tg_user: Annotated[dict, Depends(get_current_user)],
 ):
     """Детали одного события с расширенной статистикой."""
     result = await session.execute(select(Event).where(Event.id == event_id))
     event = result.scalar_one_or_none()
     if not event:
+        raise HTTPException(404, "Event not found")
+
+    # События в MODERATION не видны обычным пользователям
+    if event.status == EventStatus.MODERATION and not is_admin_user(tg_user):
         raise HTTPException(404, "Event not found")
 
     outcomes_result = await session.execute(
@@ -361,6 +397,8 @@ async def bet_place(
         telegram_id=tg_user["id"],
         username=tg_user.get("username"),
         first_name=tg_user.get("first_name"),
+        ip=tg_user.get("_ip"),
+        fingerprint=tg_user.get("_fp"),
     )
 
     try:
@@ -453,6 +491,8 @@ async def ton_deposit_init(
         telegram_id=tg_user["id"],
         username=tg_user.get("username"),
         first_name=tg_user.get("first_name"),
+        ip=tg_user.get("_ip"),
+        fingerprint=tg_user.get("_fp"),
     )
 
     from bot.services.rate_service import get_usdt_rub_rate
@@ -487,6 +527,14 @@ async def ton_deposit_status(
     session: Annotated[AsyncSession, Depends(get_db)],
 ):
     """Проверяет статус депозита — вызывается клиентом каждые 30 сек."""
+    # Загружаем владельца запроса
+    user, _ = await get_or_create_user(
+        session,
+        telegram_id=tg_user["id"],
+        username=tg_user.get("username"),
+        first_name=tg_user.get("first_name"),
+    )
+
     result = await session.execute(
         select(Payment).where(Payment.id == deposit_id)
     )
@@ -494,9 +542,12 @@ async def ton_deposit_status(
     if not payment:
         raise HTTPException(404, "Депозит не найден")
 
+    # Проверяем что депозит принадлежит текущему пользователю
+    if payment.user_id != user.id:
+        raise HTTPException(403, "Forbidden")
+
     if payment.status == "succeeded":
-        user_r = await session.execute(select(User).where(User.id == payment.user_id))
-        user = user_r.scalar_one()
+        await session.refresh(user)
         return {
             "status": "confirmed",
             "credited_rub": float(payment.amount_rub),
@@ -507,8 +558,7 @@ async def ton_deposit_status(
     from bot.services.payment_service import check_usdt_toncenter
     found = await check_usdt_toncenter(session, payment)
     if found:
-        user_r = await session.execute(select(User).where(User.id == payment.user_id))
-        user = user_r.scalar_one()
+        await session.refresh(user)
         return {
             "status": "confirmed",
             "credited_rub": float(payment.amount_rub),
@@ -781,6 +831,86 @@ async def my_achievements(
             "unlocked_at": earned_map.get(a.id),
         }
         for a in all_achievements
+    ]
+
+
+# ── Лидерборд и лента активности ─────────────────────────────────────────────
+
+def _anonymize(username: str | None, first_name: str | None, chars: int = 3) -> str:
+    name = (username or first_name or "Игрок").strip()
+    if len(name) <= chars:
+        return name + "***"
+    return name[:chars] + "***"
+
+
+@app.get("/api/leaderboard")
+async def get_leaderboard(
+    session: Annotated[AsyncSession, Depends(get_db)],
+    period: str = "week",
+):
+    """Топ-20 пользователей по net_profit за период (week|month|all)."""
+    if period not in ("week", "month", "all"):
+        raise HTTPException(400, "period must be week|month|all")
+
+    result = await session.execute(
+        select(UserStats, User)
+        .join(User, UserStats.user_id == User.id)
+        .where(UserStats.period == period)
+        .order_by(UserStats.net_profit.desc())
+        .limit(20)
+    )
+    rows = result.all()
+
+    return [
+        {
+            "rank": i + 1,
+            "display_name": _anonymize(user.username, user.first_name),
+            "net_profit": float(stats.net_profit),
+            "bets_count": stats.bets_count,
+            "win_count": stats.win_count,
+        }
+        for i, (stats, user) in enumerate(rows)
+    ]
+
+
+@app.get("/api/activity")
+async def get_activity(
+    tg_user: Annotated[dict, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+    limit: int = 30,
+):
+    """Лента последних ставок (публичная, без сумм, без ставок текущего юзера)."""
+    limit = min(limit, 50)
+
+    # Определяем user_id текущего юзера, чтобы исключить его ставки
+    self_result = await session.execute(
+        select(User.id).where(User.telegram_id == tg_user["id"])
+    )
+    self_user_id = self_result.scalar_one_or_none()
+
+    query = (
+        select(Bet, User, Event, Outcome)
+        .join(User, Bet.user_id == User.id)
+        .join(Event, Bet.event_id == Event.id)
+        .join(Outcome, Bet.outcome_id == Outcome.id)
+        .where(Event.status == EventStatus.ACTIVE)
+        .order_by(Bet.created_at.desc())
+        .limit(limit)
+    )
+    if self_user_id:
+        query = query.where(Bet.user_id != self_user_id)
+
+    result = await session.execute(query)
+    rows = result.all()
+
+    return [
+        {
+            "username": _anonymize(user.username, user.first_name, chars=2),
+            "event_title": event.title,
+            "outcome_title": outcome.title,
+            "created_at": bet.created_at.isoformat(),
+        }
+        for bet, user, event, outcome in rows
     ]
 
 

@@ -130,6 +130,84 @@ async def _check_flippening_rule(rule: dict) -> str | None:
     return None
 
 
+async def resolve_crypto_price_event(session: AsyncSession, event: Event) -> bool:
+    """
+    Авто-разрешение события с auto_resolve_source="coingecko_price".
+    Возвращает True при успехе, False при ошибке (событие переходит в LOCKED).
+    """
+    import json
+
+    try:
+        payload = json.loads(event.auto_resolve_payload or "{}")
+    except Exception:
+        logger.error(f"Invalid auto_resolve_payload for event #{event.id}")
+        return False
+
+    coin_id = payload.get("coin_id")
+    threshold = payload.get("threshold_usd")
+    direction = payload.get("direction", "above")
+
+    if not coin_id or threshold is None:
+        logger.error(f"Missing coin_id or threshold in payload for event #{event.id}")
+        return False
+
+    try:
+        url = "https://api.coingecko.com/api/v3/simple/price"
+        params = {"ids": coin_id, "vs_currencies": "usd"}
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(url, params=params)
+            resp.raise_for_status()
+            data = resp.json()
+        if coin_id not in data:
+            raise ValueError(f"CoinGecko returned no data for {coin_id}")
+        current_price = Decimal(str(data[coin_id]["usd"]))
+    except Exception as exc:
+        logger.warning(
+            f"CoinGecko error for event #{event.id} ({coin_id}): {exc} — setting LOCKED"
+        )
+        event.status = EventStatus.LOCKED
+        await session.commit()
+        return False
+
+    threshold_dec = Decimal(str(threshold))
+    yes_wins = (
+        current_price >= threshold_dec
+        if direction == "above"
+        else current_price <= threshold_dec
+    )
+
+    outcomes_result = await session.execute(
+        select(Outcome)
+        .where(Outcome.event_id == event.id)
+        .order_by(Outcome.sort_order)
+    )
+    outcomes = list(outcomes_result.scalars().all())
+    if len(outcomes) < 2:
+        logger.error(f"Event #{event.id} has fewer than 2 outcomes")
+        return False
+
+    winner = outcomes[0] if yes_wins else outcomes[1]
+    try:
+        summary = await resolve_event(session, event.id, winner.id)
+        result_word = "ДА" if yes_wins else "НЕТ"
+        logger.info(
+            f"Auto-resolved event #{event.id}: {coin_id} "
+            f"{float(current_price):.2f} vs {float(threshold_dec):.2f} "
+            f"→ {result_word} ({winner.title})"
+        )
+        await notify_admins(
+            f"🤖 Крипто-оракул разрешил #{event.id}\n"
+            f"«{event.title[:60]}»\n"
+            f"Цена: ${float(current_price):,.2f} / Порог: ${float(threshold_dec):,.2f}\n"
+            f"Победил: {winner.title}\n"
+            f"Выплачено: {summary['total_payout']:.2f} ₽"
+        )
+        return True
+    except Exception as exc:
+        logger.exception(f"resolve_event failed for crypto event #{event.id}: {exc}")
+        return False
+
+
 async def check_oracles() -> int:
     """
     Проходит по всем правилам оракулов, проверяет условия,
@@ -144,7 +222,7 @@ async def check_oracles() -> int:
         # 1. Сначала закрываем приём ставок для просроченных событий
         await _lock_expired_events(session)
 
-        # 2. Проверяем оракулы
+        # 2. Проверяем статичные ORACLE_RULES (долгосрочные события)
         for slug, rule in ORACLE_RULES.items():
             ev_result = await session.execute(
                 select(Event).where(Event.slug == slug)
@@ -153,7 +231,6 @@ async def check_oracles() -> int:
             if not event or event.status == EventStatus.RESOLVED:
                 continue
 
-            # Если событие просрочено — закрываем как NO (если YES не выполнен)
             now = datetime.now(timezone.utc)
 
             result_type = None
@@ -193,6 +270,25 @@ async def check_oracles() -> int:
                         )
                     except Exception as e:
                         logger.exception(f"Resolve failed for {event.id}: {e}")
+
+        # 3. Авто-разрешение intraday crypto-событий через CoinGecko
+        now = datetime.now(timezone.utc)
+        crypto_result = await session.execute(
+            select(Event).where(
+                Event.status == EventStatus.ACTIVE,
+                Event.auto_resolve_source == "coingecko_price",
+                Event.closes_at <= now,
+            )
+        )
+        for event in crypto_result.scalars().all():
+            try:
+                ok = await resolve_crypto_price_event(session, event)
+                if ok:
+                    resolved_count += 1
+            except Exception as exc:
+                logger.exception(
+                    f"Crypto oracle error for event #{event.id}: {exc}"
+                )
 
     return resolved_count
 

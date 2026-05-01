@@ -8,7 +8,7 @@ from enum import Enum as PyEnum
 
 from sqlalchemy import (
     BigInteger, Boolean, DateTime, ForeignKey, Numeric,
-    String, Text, Enum, Index
+    String, Text, Enum, Index, UniqueConstraint
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -19,11 +19,12 @@ class Base(DeclarativeBase):
 
 class EventStatus(str, PyEnum):
     """Статус события на платформе."""
-    DRAFT = "draft"          # Черновик (не опубликован)
-    ACTIVE = "active"        # Можно ставить
-    LOCKED = "locked"        # Ставки закрыты, ждём результата
-    RESOLVED = "resolved"    # Результат определён, выплаты произведены
-    CANCELLED = "cancelled"  # Отменено, средства возвращены
+    DRAFT = "draft"            # Черновик (не опубликован)
+    MODERATION = "moderation"  # Ждёт фото/проверки admin'а, юзерам не виден
+    ACTIVE = "active"          # Можно ставить
+    LOCKED = "locked"          # Ставки закрыты, ждём результата
+    RESOLVED = "resolved"      # Результат определён, выплаты произведены
+    CANCELLED = "cancelled"    # Отменено, средства возвращены
 
 
 class TransactionType(str, PyEnum):
@@ -148,6 +149,13 @@ class Event(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )
+
+    # Временной горизонт события: intraday (≤6ч), daily (≤24ч), weekly (≤7д), longterm (>7д)
+    timeframe: Mapped[str] = mapped_column(String(16), default="longterm", index=True)
+
+    # Источник и параметры для авто-разрешения оракулом
+    auto_resolve_source: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    auto_resolve_payload: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     category: Mapped["Category"] = relationship(back_populates="events")
     outcomes: Mapped[list["Outcome"]] = relationship(
@@ -343,3 +351,44 @@ class Comment(Base):
 # Дополнительные индексы для производительности
 Index("ix_bets_user_event", Bet.user_id, Bet.event_id)
 Index("ix_events_status_closes", Event.status, Event.closes_at)
+Index("ix_events_timeframe_status", Event.timeframe, Event.status)
+
+
+class UserStats(Base):
+    """Кэшированная статистика пользователя по периодам — для лидерборда."""
+    __tablename__ = "user_stats"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    period: Mapped[str] = mapped_column(String(8))  # "week" | "month" | "all"
+    net_profit: Mapped[Decimal] = mapped_column(
+        Numeric(18, 2), default=Decimal("0.00")
+    )
+    bets_count: Mapped[int] = mapped_column(default=0)
+    win_count: Mapped[int] = mapped_column(default=0)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+
+    user: Mapped["User"] = relationship()
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "period", name="uq_user_stats_user_period"),
+    )
+
+
+class RegistrationLog(Base):
+    """Лог регистраций для защиты от мульти-аккаунтов и получения нескольких welcome-бонусов."""
+    __tablename__ = "registration_log"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    telegram_id: Mapped[int] = mapped_column(BigInteger, nullable=False, index=True)
+    ip_address: Mapped[str | None] = mapped_column(String(45), nullable=True, index=True)
+    user_agent: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    fingerprint: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True
+    )
+
+
+Index("ix_registration_log_ip_created", RegistrationLog.ip_address, RegistrationLog.created_at)

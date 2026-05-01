@@ -20,6 +20,14 @@ class Settings(BaseSettings):
     def admin_id_list(self) -> list[int]:
         return [int(x.strip()) for x in self.admin_ids.split(",") if x.strip()]
 
+    @property
+    def cors_origins(self) -> list[str]:
+        origins = ["https://web.telegram.org", "https://t.me"]
+        url = self.miniapp_url.rstrip("/")
+        if url and url not in origins:
+            origins.append(url)
+        return origins
+
     # Database
     # Default — абсолютный путь в /data (persistenceMount на Amvera).
     # Локально переопределяется через .env (DATABASE_URL=...).
@@ -34,6 +42,7 @@ class Settings(BaseSettings):
     # YooKassa
     yookassa_shop_id: str = ""
     yookassa_secret_key: str = ""
+    yookassa_verify_ip: bool = True  # проверять IP входящих webhook-ов
 
     # USDT (TON)
     ton_api_key: str = ""
@@ -76,6 +85,19 @@ class Settings(BaseSettings):
     auto_events_enabled: bool = True      # включить автопубликацию
     auto_events_per_run: int = 2          # макс. событий за один cron-тик
     auto_events_min_interval_h: int = 2   # минимум часов между дублями из одной темы
+
+    # Краткосрочные crypto-события (intraday, авто-резолв через CoinGecko)
+    short_term_enabled: bool = True
+    short_term_coins: str = "bitcoin,ethereum,the-open-network"
+    short_term_horizons_hours: str = "1,3,6"
+
+    @property
+    def short_term_coins_list(self) -> list[str]:
+        return [c.strip() for c in self.short_term_coins.split(",") if c.strip()]
+
+    @property
+    def short_term_horizons_list(self) -> list[int]:
+        return [int(h.strip()) for h in self.short_term_horizons_hours.split(",") if h.strip()]
 
 
 settings = Settings()  # type: ignore[call-arg]

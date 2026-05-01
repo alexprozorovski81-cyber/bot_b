@@ -11,8 +11,10 @@
 """
 import hashlib
 import logging
+import os
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
+from pathlib import Path
 
 from aiogram import Router, F
 from aiogram.filters import Command, StateFilter
@@ -51,6 +53,13 @@ class AddEventStates(StatesGroup):
     closes_days = State()
     source = State()
     confirm = State()
+
+
+# ── FSM для модерации событий ─────────────────────────────────────────────────
+
+class ModerationStates(StatesGroup):
+    waiting_photo = State()
+    wiki_preview = State()  # wiki_url хранится в state data
 
 
 @router.message(Command("addevent"))
@@ -537,6 +546,294 @@ async def cmd_updateimages(message: Message) -> None:
     )
 
 
+# ── Модерация событий (/moderation) ─────────────────────────────────────────
+
+@router.message(Command("moderation"))
+async def cmd_moderation(message: Message) -> None:
+    if not is_admin(message.from_user.id):
+        return
+
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(
+            select(Event)
+            .where(Event.status == EventStatus.MODERATION)
+            .order_by(Event.id)
+            .limit(10)
+        )
+        events = result.scalars().all()
+
+    if not events:
+        await message.answer("✅ Очередь модерации пуста.")
+        return
+
+    await message.answer(
+        f"<b>🔍 Очередь модерации: {len(events)} событий</b>\n\n"
+        "Выбери действие для каждого события.",
+        parse_mode="HTML",
+    )
+
+    for ev in events:
+        text = (
+            f"<b>#{ev.id}</b> {ev.title[:80]}\n"
+            f"<i>Фото: {'✅ есть' if ev.image_url else '❌ нет'}</i>"
+        )
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [
+                InlineKeyboardButton(text="📷 Загрузить фото", callback_data=f"mod:photo:{ev.id}"),
+                InlineKeyboardButton(text="🔍 Wiki-фото", callback_data=f"mod:wiki:{ev.id}"),
+            ],
+            [
+                InlineKeyboardButton(text="✅ Опубликовать", callback_data=f"mod:publish:{ev.id}"),
+                InlineKeyboardButton(text="🗑 Удалить", callback_data=f"mod:delete:{ev.id}"),
+            ],
+        ])
+        await message.answer(text, reply_markup=kb, parse_mode="HTML")
+
+
+@router.callback_query(F.data.startswith("mod:photo:"))
+async def mod_photo_start(callback: CallbackQuery, state: FSMContext) -> None:
+    if not is_admin(callback.from_user.id):
+        await callback.answer("Только для администратора", show_alert=True)
+        return
+
+    event_id = int(callback.data.split(":")[2])
+    await state.update_data(mod_event_id=event_id)
+    await state.set_state(ModerationStates.waiting_photo)
+    await callback.message.answer(
+        f"📷 Отправь фото для события #{event_id}.\n"
+        "Минимум 400×300 пикселей. Напиши /cancel чтобы отменить."
+    )
+    await callback.answer()
+
+
+@router.message(ModerationStates.waiting_photo, Command("cancel"))
+async def mod_photo_cancel(message: Message, state: FSMContext) -> None:
+    await state.clear()
+    await message.answer("❌ Загрузка фото отменена.")
+
+
+@router.message(ModerationStates.waiting_photo, F.photo)
+async def mod_photo_upload(message: Message, state: FSMContext) -> None:
+    from PIL import Image as PilImage
+    import io
+
+    data = await state.get_data()
+    event_id = data.get("mod_event_id")
+    if not event_id:
+        await state.clear()
+        return
+
+    photo = message.photo[-1]
+    bot = message.bot
+
+    file = await bot.get_file(photo.file_id)
+
+    # Скачиваем в память для валидации через Pillow
+    buf = io.BytesIO()
+    await bot.download_file(file.file_path, destination=buf)
+    buf.seek(0)
+
+    try:
+        img = PilImage.open(buf)
+        w, h = img.size
+        if w < 400 or h < 300:
+            await message.answer(
+                f"⚠️ Фото слишком маленькое ({w}×{h}). Нужно минимум 400×300."
+            )
+            return
+        aspect = w / h
+        if aspect < 0.5 or aspect > 2.0:
+            await message.answer(
+                f"⚠️ Нестандартное соотношение сторон ({aspect:.2f}). "
+                "Допустимо от 0.5 до 2.0."
+            )
+            return
+    except Exception as e:
+        await message.answer(f"⚠️ Не удалось прочитать изображение: {e}")
+        return
+
+    # Сохраняем на диск
+    uploads_dir = Path("miniapp/images/uploads")
+    uploads_dir.mkdir(parents=True, exist_ok=True)
+    dest_path = uploads_dir / f"{event_id}.jpg"
+
+    buf.seek(0)
+    dest_path.write_bytes(buf.read())
+
+    image_url = f"/miniapp/images/uploads/{event_id}.jpg"
+
+    async with AsyncSessionLocal() as session:
+        ev_result = await session.execute(select(Event).where(Event.id == event_id))
+        event = ev_result.scalar_one_or_none()
+        if not event:
+            await message.answer(f"Событие #{event_id} не найдено")
+            await state.clear()
+            return
+
+        event.image_url = image_url
+        event.status = EventStatus.ACTIVE
+        await session.commit()
+
+    await state.clear()
+    await message.answer(
+        f"✅ Фото загружено, событие #{event_id} опубликовано!\n"
+        f"URL: <code>{image_url}</code>",
+        parse_mode="HTML",
+    )
+
+
+@router.callback_query(F.data.startswith("mod:wiki:"))
+async def mod_wiki_search(callback: CallbackQuery, state: FSMContext) -> None:
+    if not is_admin(callback.from_user.id):
+        await callback.answer("Только для администратора", show_alert=True)
+        return
+
+    event_id = int(callback.data.split(":")[2])
+
+    async with AsyncSessionLocal() as session:
+        ev_result = await session.execute(select(Event).where(Event.id == event_id))
+        event = ev_result.scalar_one_or_none()
+
+    if not event:
+        await callback.answer("Событие не найдено", show_alert=True)
+        return
+
+    await callback.answer("🔍 Ищу Wikipedia...")
+
+    async with AsyncSessionLocal() as session:
+        cat_result = await session.execute(
+            select(Category).where(Category.id == event.category_id)
+        )
+        cat = cat_result.scalar_one_or_none()
+        cat_slug = cat.slug if cat else None
+
+    wiki_url = await pick_event_image(
+        title=event.title,
+        category_slug=cat_slug,
+        prefilled=None,
+        slug=event.slug,
+        strict=False,
+    )
+
+    if not wiki_url or "/miniapp/" in wiki_url:
+        await callback.message.answer(
+            f"❌ Wikipedia не нашла подходящего фото для события #{event_id}.\n"
+            "Попробуй загрузить фото вручную."
+        )
+        return
+
+    await state.update_data(mod_event_id=event_id, wiki_url=wiki_url)
+    await state.set_state(ModerationStates.wiki_preview)
+
+    kb = InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(
+            text="✅ Использовать это фото",
+            callback_data=f"mod:wiki_confirm:{event_id}",
+        ),
+        InlineKeyboardButton(text="❌ Отмена", callback_data="mod:wiki_cancel"),
+    ]])
+
+    try:
+        await callback.message.answer_photo(
+            photo=wiki_url,
+            caption=f"Найдено фото с Wikipedia для #{event_id}.\nПодтвердить?",
+            reply_markup=kb,
+        )
+    except Exception:
+        await callback.message.answer(
+            f"Найдено фото: {wiki_url}\nПодтвердить?",
+            reply_markup=kb,
+        )
+
+
+@router.callback_query(F.data.startswith("mod:wiki_confirm:"), ModerationStates.wiki_preview)
+async def mod_wiki_confirm(callback: CallbackQuery, state: FSMContext) -> None:
+    if not is_admin(callback.from_user.id):
+        await callback.answer("Только для администратора", show_alert=True)
+        return
+
+    data = await state.get_data()
+    event_id = data.get("mod_event_id")
+    wiki_url = data.get("wiki_url")
+
+    await state.clear()
+
+    if not event_id or not wiki_url:
+        await callback.answer("Данные устарели", show_alert=True)
+        return
+
+    async with AsyncSessionLocal() as session:
+        ev_result = await session.execute(select(Event).where(Event.id == event_id))
+        event = ev_result.scalar_one_or_none()
+        if not event:
+            await callback.answer("Событие не найдено", show_alert=True)
+            return
+
+        event.image_url = wiki_url
+        event.status = EventStatus.ACTIVE
+        await session.commit()
+
+    await callback.message.edit_caption(
+        caption=f"✅ Фото установлено, событие #{event_id} опубликовано!"
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "mod:wiki_cancel")
+async def mod_wiki_cancel(callback: CallbackQuery, state: FSMContext) -> None:
+    await state.clear()
+    await callback.message.delete()
+    await callback.answer("Отменено")
+
+
+@router.callback_query(F.data.startswith("mod:publish:"))
+async def mod_publish(callback: CallbackQuery) -> None:
+    if not is_admin(callback.from_user.id):
+        await callback.answer("Только для администратора", show_alert=True)
+        return
+
+    event_id = int(callback.data.split(":")[2])
+
+    async with AsyncSessionLocal() as session:
+        ev_result = await session.execute(select(Event).where(Event.id == event_id))
+        event = ev_result.scalar_one_or_none()
+        if not event:
+            await callback.answer("Событие не найдено", show_alert=True)
+            return
+
+        event.status = EventStatus.ACTIVE
+        await session.commit()
+
+    await callback.message.edit_reply_markup(reply_markup=None)
+    await callback.message.answer(
+        f"✅ Событие #{event_id} опубликовано без фото."
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("mod:delete:"))
+async def mod_delete(callback: CallbackQuery) -> None:
+    if not is_admin(callback.from_user.id):
+        await callback.answer("Только для администратора", show_alert=True)
+        return
+
+    event_id = int(callback.data.split(":")[2])
+
+    async with AsyncSessionLocal() as session:
+        ev_result = await session.execute(select(Event).where(Event.id == event_id))
+        event = ev_result.scalar_one_or_none()
+        if not event:
+            await callback.answer("Событие не найдено", show_alert=True)
+            return
+
+        event.status = EventStatus.CANCELLED
+        await session.commit()
+
+    await callback.message.edit_reply_markup(reply_markup=None)
+    await callback.message.answer(f"🗑 Событие #{event_id} отменено.")
+    await callback.answer()
+
+
 # ── Остальные команды ────────────────────────────────────────────────────────
 
 @router.message(Command("admin"))
@@ -548,6 +845,7 @@ async def admin_menu(message: Message) -> None:
         "<b>⚙️ Админ-панель</b>\n\n"
         "Доступные команды:\n"
         "• /events — список активных событий\n"
+        "• /moderation — очередь событий без фото\n"
         "• /addevent — создать новое событие\n"
         "• /newscheck — проверить RSS прямо сейчас\n"
         "• /updateimages — обновить картинки событий (Wiki + SVG)\n"
@@ -568,7 +866,7 @@ async def list_events(message: Message) -> None:
     async with AsyncSessionLocal() as session:
         result = await session.execute(
             select(Event).where(
-                Event.status.in_([EventStatus.ACTIVE, EventStatus.LOCKED])
+                Event.status.in_([EventStatus.ACTIVE, EventStatus.LOCKED, EventStatus.MODERATION])
             ).order_by(Event.closes_at)
         )
         events = result.scalars().all()
@@ -587,8 +885,13 @@ async def list_events(message: Message) -> None:
             )
             volume = vol_result.scalar() or Decimal("0")
 
+        status_badge = ""
+        if ev.status == EventStatus.MODERATION:
+            status_badge = " 🔍"
+        elif ev.status == EventStatus.LOCKED:
+            status_badge = " 🔒"
         lines.append(
-            f"<b>#{ev.id}</b> {ev.title[:60]}\n"
+            f"<b>#{ev.id}</b>{status_badge} {ev.title[:60]}\n"
             f"  📊 объём: {volume:.0f} ₽ • до {ev.closes_at:%d.%m %H:%M}\n"
         )
 

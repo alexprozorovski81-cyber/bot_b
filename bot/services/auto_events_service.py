@@ -350,6 +350,9 @@ async def create_auto_event(
     description: str = "",
 ) -> Event | None:
     """Создаёт событие в БД. Возвращает None если slug уже есть."""
+    from bot.services.event_images import pick_event_image
+    from bot.services.image_validator import validate_image_url
+
     slug = _make_slug(question)
 
     # Проверяем дубль
@@ -370,14 +373,36 @@ async def create_auto_event(
         logger.warning("No categories in DB yet, skipping auto-event")
         return None
 
+    # Выбираем фото: strict=True → None если только SVG доступен
+    picked_url = await pick_event_image(
+        title=question,
+        category_slug=category_slug,
+        prefilled=image_url,
+        strict=True,
+    )
+
+    image_ok = False
+    final_image_url: str | None = None
+    if picked_url:
+        valid, reason = await validate_image_url(picked_url)
+        if valid:
+            image_ok = True
+            final_image_url = picked_url
+        else:
+            logger.info(
+                "Auto-event image validation failed (%s) for '%s'", reason, question[:50]
+            )
+
+    event_status = EventStatus.ACTIVE if image_ok else EventStatus.MODERATION
+
     event = Event(
         slug=slug,
         title=question,
         description=description or f"Автоматически создано по материалам {article_url or 'новостных лент'}.",
-        image_url=image_url,
+        image_url=final_image_url,
         article_url=article_url,
         category_id=cat.id,
-        status=EventStatus.ACTIVE,
+        status=event_status,
         liquidity_b=Decimal("1000.00"),
         closes_at=deadline,
         resolves_at=deadline + timedelta(days=7),
@@ -392,8 +417,28 @@ async def create_auto_event(
     await session.commit()
     await session.refresh(event)
 
-    logger.info("Auto-event created: [%s] %s", category_slug, question)
+    logger.info(
+        "Auto-event created [%s] status=%s: %s",
+        category_slug, event_status.value, question,
+    )
+
+    if event_status == EventStatus.MODERATION:
+        await _notify_admins_moderation(event)
+
     return event
+
+
+async def _notify_admins_moderation(event: Event) -> None:
+    """Уведомляет всех админов о событии, ожидающем фото."""
+    try:
+        from bot.notifier import notify_admins
+        await notify_admins(
+            f"⚠️ Новое событие ожидает фото (#{event.id})\n\n"
+            f"<b>{event.title}</b>\n"
+            f"Используй /moderation чтобы добавить фото или опубликовать без него."
+        )
+    except Exception as exc:
+        logger.warning("Failed to notify admins about moderation event: %s", exc)
 
 
 # ─── Главная точка входа (вызывается из cron) ────────────────────────────────

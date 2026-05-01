@@ -7,9 +7,54 @@ window.state = {
     categories: [],
     events: [],
     activeCategory: '',
+    activeTimeframe: '',
     selectedEvent: null,
     selectedOutcome: null,
     quoteTimer: null,
+};
+
+// ═══════════════════════════════════════
+// Тема (light / dark)
+// ═══════════════════════════════════════
+const THEME_KEY = 'predictbet_theme';
+
+function applyTheme(theme) {
+    document.documentElement.setAttribute('data-theme', theme);
+    const btn = document.getElementById('theme-toggle');
+    if (btn) btn.textContent = theme === 'dark' ? '☀️' : '🌙';
+}
+
+function loadTheme() {
+    const tg = window.Telegram?.WebApp;
+    // 1. CloudStorage
+    if (tg?.CloudStorage) {
+        tg.CloudStorage.getItem(THEME_KEY, (err, val) => {
+            if (!err && val) { applyTheme(val); return; }
+            // 2. localStorage fallback
+            const ls = localStorage.getItem(THEME_KEY);
+            if (ls) { applyTheme(ls); return; }
+            // 3. Telegram colorScheme
+            applyTheme(tg.colorScheme === 'dark' ? 'dark' : 'light');
+        });
+    } else {
+        const ls = localStorage.getItem(THEME_KEY);
+        if (ls) { applyTheme(ls); return; }
+        const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+        applyTheme(prefersDark ? 'dark' : 'light');
+    }
+}
+
+function saveTheme(theme) {
+    localStorage.setItem(THEME_KEY, theme);
+    const tg = window.Telegram?.WebApp;
+    if (tg?.CloudStorage) tg.CloudStorage.setItem(THEME_KEY, theme, () => {});
+}
+
+window.toggleTheme = function() {
+    const current = document.documentElement.getAttribute('data-theme') || 'light';
+    const next = current === 'dark' ? 'light' : 'dark';
+    applyTheme(next);
+    saveTheme(next);
 };
 
 // ═══════════════════════════════════════
@@ -65,14 +110,16 @@ async function loadInitial() {
         const [me, categories, events] = await Promise.all([
             api.me(),
             api.categories(),
-            api.events(),
+            api.events(state.activeCategory, state.activeTimeframe),
         ]);
         state.me = me;
         state.categories = categories;
         state.events = events;
         renderBalance();
         renderCategories();
+        renderTimeframeTabs();
         renderEvents();
+        loadActivityTicker();
     } catch (e) {
         console.error(e);
         renderError('Не удалось загрузить данные');
@@ -115,12 +162,63 @@ async function switchCategory(slug) {
     renderCategories();
     renderSkeletons();
     try {
-        state.events = await api.events(slug);
+        state.events = await api.events(slug, state.activeTimeframe);
         renderEvents();
     } catch (e) {
         renderError(e.message);
     }
 }
+
+// ═══════════════════════════════════════
+// Timeframe tabs
+// ═══════════════════════════════════════
+function renderTimeframeTabs() {
+    document.querySelectorAll('.timeframe-tab').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.timeframe === state.activeTimeframe);
+    });
+}
+
+async function switchTimeframe(tf) {
+    state.activeTimeframe = tf;
+    renderTimeframeTabs();
+    renderSkeletons();
+    try {
+        state.events = await api.events(state.activeCategory, tf);
+        renderEvents();
+    } catch (e) {
+        renderError(e.message);
+    }
+}
+
+// ═══════════════════════════════════════
+// Activity ticker
+// ═══════════════════════════════════════
+async function loadActivityTicker() {
+    const ticker = document.getElementById('activity-ticker');
+    const scroll = document.getElementById('activity-ticker-scroll');
+    if (!ticker || !scroll) return;
+    try {
+        const items = await api.activity(20);
+        if (!items || !items.length) { ticker.style.display = 'none'; return; }
+        scroll.innerHTML = items.map(it => `
+            <div class="activity-ticker-item">
+                <span class="activity-ticker-user">${it.username}</span>
+                <span style="color:var(--text-faint)">→</span>
+                <span class="activity-ticker-outcome">${it.outcome_title}</span>
+                <span class="activity-ticker-event">«${it.event_title.slice(0, 35)}${it.event_title.length > 35 ? '…' : ''}»</span>
+            </div>
+        `).join('');
+        ticker.style.display = '';
+        // Auto-scroll every 4s
+        let idx = 0;
+        setInterval(() => {
+            idx = (idx + 1) % items.length;
+            const item = scroll.children[idx];
+            if (item) item.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'start' });
+        }, 4000);
+    } catch (_) {
+        ticker.style.display = 'none';
+    }}
 
 // ═══════════════════════════════════════
 // Список событий
@@ -181,41 +279,42 @@ function buildEventCard(event) {
     const tpl = document.getElementById('event-card-template');
     const card = tpl.content.cloneNode(true).querySelector('.event-card');
 
-    // Изображение / эмодзи. Сразу рисуем эмодзи как плейсхолдер,
-    // и параллельно пробуем подгрузить фото — если получится, заменим.
-    const img = card.querySelector('.event-image');
-    img.textContent = getCategoryEmoji(event);
+    // ── Photo banner (Polymarket style) ──────────────────────────────
+    const photoWrap = card.querySelector('.event-card-photo-wrap');
+    const emoji = getCategoryEmoji(event);
+
     if (event.image_url) {
-        const probe = new Image();
-        probe.onload = () => {
-            img.style.backgroundImage = `url("${event.image_url}")`;
-            img.style.backgroundSize = 'cover';
-            img.textContent = '';
+        // Try loading image; fall back to emoji placeholder
+        const img = document.createElement('img');
+        img.className = 'event-card-photo';
+        img.alt = '';
+        img.src = event.image_url;
+        img.onerror = () => {
+            img.replaceWith(makePlaceholder(emoji));
         };
-        probe.onerror = () => {
-            // Фото не загрузилось (404/CORS) — оставляем эмодзи.
-        };
-        probe.src = event.image_url;
+        photoWrap.appendChild(img);
+    } else {
+        photoWrap.appendChild(makePlaceholder(emoji));
     }
 
-    // Заголовок (кликабелен)
+    // Timeframe badge for intraday events
+    if (event.timeframe === 'intraday') {
+        const badge = document.createElement('span');
+        badge.className = 'timeframe-badge';
+        badge.textContent = '⚡ СЕЙЧАС';
+        photoWrap.appendChild(badge);
+    }
+
+    // Make whole photo clickable
+    photoWrap.style.cursor = 'pointer';
+    photoWrap.onclick = () => openEventDetail(event.id);
+
+    // ── Card body ─────────────────────────────────────────────────────
     const titleEl = card.querySelector('.event-title');
     titleEl.textContent = event.title;
     titleEl.style.cursor = 'pointer';
     titleEl.onclick = () => openEventDetail(event.id);
 
-    // Ссылка на источник под заголовком
-    if (event.article_url) {
-        const srcLink = document.createElement('a');
-        srcLink.className = 'event-source-link';
-        srcLink.href = event.article_url;
-        srcLink.target = '_blank';
-        srcLink.rel = 'noopener noreferrer';
-        srcLink.textContent = '🔗 Читать источник';
-        titleEl.after(srcLink);
-    }
-
-    // Мета: живой таймер + статистика участников
     const isClosingSoon = (new Date(event.closes_at) - Date.now()) < 86400000 * 2;
     const players = event.players_count || 0;
     const volume = event.volume_rub || 0;
@@ -227,39 +326,39 @@ function buildEventCard(event) {
         ? `<span style="color:var(--no)">⏰ <span data-closes-at="${event.closes_at}">${fmtCountdown(event.closes_at)}</span></span>`
         : `⏱ <span data-closes-at="${event.closes_at}">${fmtCountdown(event.closes_at)}</span>`;
 
-    // Исходы
-    const outcomesDiv = card.querySelector('.event-outcomes');
-    if (event.outcomes.length === 3) outcomesDiv.classList.add('multi-3');
-    else if (event.outcomes.length === 1) outcomesDiv.classList.add('single');
-
+    // ── Footer: YES / NO buttons ──────────────────────────────────────
+    const footer = card.querySelector('.event-card-footer');
     const totalPrice = event.outcomes.reduce((s, o) => s + o.price, 0) || 1;
 
-    event.outcomes.forEach((outcome, i) => {
-        const pct = outcome.price / totalPrice;
-        const btn = document.createElement('button');
-        btn.className = 'outcome-btn';
+    // For binary events show YES/NO style; for multi show all as pills
+    const isBinary = event.outcomes.length === 2;
 
-        if (event.outcomes.length === 2) {
+    event.outcomes.forEach((outcome, i) => {
+        const pct = Math.round((outcome.price / totalPrice) * 100);
+        const btn = document.createElement('button');
+        btn.className = 'outcome-btn-bottom';
+
+        if (isBinary) {
             const lower = outcome.title.toLowerCase();
-            if (lower === 'да' || lower === 'yes' || i === 0) btn.classList.add('yes');
+            if (lower === 'да' || lower.includes('выше') || lower === 'yes' || i === 0) btn.classList.add('yes');
             else btn.classList.add('no');
+        } else {
+            btn.style.cssText = 'flex:1;border:1px solid var(--border);border-radius:10px;padding:8px 4px;font-family:inherit;font-size:12px;font-weight:700;cursor:pointer;background:var(--bg-hover);color:var(--text)';
         }
 
-        // CSS переменная для нижней полоски
-        btn.style.setProperty('--fill', `${Math.round(pct * 100)}%`);
-
-        btn.innerHTML = `
-            <div class="outcome-title">${outcome.title}</div>
-            <div class="outcome-stats">
-                <span class="outcome-percent">${Math.round(pct * 100)}%</span>
-                <span class="outcome-odds">×${outcome.odds.toFixed(2)}</span>
-            </div>
-        `;
+        btn.innerHTML = `<span class="btn-label">${outcome.title.slice(0, 16)}</span><span class="btn-pct">${pct}%</span>`;
         btn.onclick = () => openBetModal(event, outcome);
-        outcomesDiv.appendChild(btn);
+        footer.appendChild(btn);
     });
 
     return card;
+}
+
+function makePlaceholder(emoji) {
+    const div = document.createElement('div');
+    div.className = 'event-card-photo-placeholder';
+    div.textContent = emoji;
+    return div;
 }
 
 function renderError(msg) {
@@ -390,23 +489,98 @@ async function confirmBet() {
 }
 
 // ═══════════════════════════════════════
+// Leaderboard
+// ═══════════════════════════════════════
+let _activeLbPeriod = 'week';
+
+async function loadLeaderboard(period = _activeLbPeriod) {
+    _activeLbPeriod = period;
+
+    // Update period tabs
+    document.querySelectorAll('.leaderboard-period-tab').forEach(t => {
+        t.classList.toggle('active', t.dataset.period === period);
+    });
+
+    const list = document.getElementById('leaderboard-list');
+    if (!list) return;
+    list.innerHTML = '<div class="loading"><div class="spinner"></div></div>';
+
+    try {
+        const rows = await api.leaderboard(period);
+        if (!rows.length) {
+            list.innerHTML = '<div class="empty-state"><h3>Нет данных</h3><p>Данных за этот период ещё нет</p></div>';
+            return;
+        }
+
+        const rankLabels = { 1: '🥇', 2: '🥈', 3: '🥉' };
+        const rankClass  = { 1: 'gold', 2: 'silver', 3: 'bronze' };
+
+        list.innerHTML = rows.map(r => {
+            const rankStr  = rankLabels[r.rank] || r.rank;
+            const rankCls  = rankClass[r.rank] || '';
+            const profit   = r.net_profit;
+            const pSign    = profit >= 0 ? '+' : '';
+            const pClass   = profit >= 0 ? 'positive' : 'negative';
+            const winRate  = r.bets_count > 0 ? Math.round((r.win_count / r.bets_count) * 100) : 0;
+            return `
+                <div class="leaderboard-row">
+                    <div class="leaderboard-rank ${rankCls}">${rankStr}</div>
+                    <div class="leaderboard-info">
+                        <div class="leaderboard-name">${r.display_name}</div>
+                        <div class="leaderboard-bets">${r.bets_count} ставок · ${winRate}% побед</div>
+                    </div>
+                    <div class="leaderboard-profit ${pClass}">${pSign}${Math.round(profit).toLocaleString('ru-RU')} ₽</div>
+                </div>`;
+        }).join('');
+    } catch (e) {
+        list.innerHTML = `<div class="empty-state"><h3>Ошибка</h3><p>${e.message}</p></div>`;
+    }
+}
+
+// ═══════════════════════════════════════
 // Bottom Nav
 // ═══════════════════════════════════════
+function showScreen(tab) {
+    const marketsScreen    = document.getElementById('markets-screen');
+    const leaderboardScreen = document.getElementById('leaderboard-screen');
+    const catEl            = document.getElementById('categories');
+    const tfEl             = document.getElementById('timeframe-tabs');
+
+    // Hide all screens
+    if (marketsScreen)    marketsScreen.hidden = true;
+    if (leaderboardScreen) leaderboardScreen.hidden = true;
+
+    // Show events-feed placeholder for portfolio / profile
+    const feedEl = document.getElementById('events-feed');
+
+    if (tab === 'markets') {
+        if (marketsScreen) marketsScreen.hidden = false;
+        catEl.style.display = '';
+        tfEl.style.display = '';
+    } else if (tab === 'leaderboard') {
+        if (leaderboardScreen) leaderboardScreen.hidden = false;
+        catEl.style.display = 'none';
+        tfEl.style.display = 'none';
+    } else {
+        // portfolio / profile — re-use events-feed inside markets-screen
+        if (marketsScreen) marketsScreen.hidden = false;
+        catEl.style.display = 'none';
+        tfEl.style.display = 'none';
+    }
+}
+
 function setupBottomNav() {
     document.querySelectorAll('.nav-btn').forEach((btn) => {
         btn.onclick = () => {
             document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
             btn.classList.add('active');
-            // Скрываем категории для не-маркетов
-            const catEl = document.getElementById('categories');
             const tab = btn.dataset.tab;
-            catEl.style.display = tab === 'markets' ? '' : 'none';
-            if (tab === 'portfolio') loadPortfolio();
+            showScreen(tab);
+
+            if (tab === 'portfolio')   loadPortfolio();
             else if (tab === 'profile') loadProfile();
-            else {
-                catEl.style.display = '';
-                loadInitial();
-            }
+            else if (tab === 'leaderboard') loadLeaderboard(_activeLbPeriod);
+            else loadInitial();
         };
     });
 }
@@ -982,9 +1156,8 @@ window.submitComment = async function(eventId) {
 };
 
 function goBack() {
-    // Возвращаемся к предыдущему табу
     const activeTab = document.querySelector('.nav-btn.active')?.dataset?.tab;
-    document.getElementById('categories').style.display = '';
+    showScreen(activeTab || 'markets');
     if (activeTab === 'portfolio') loadPortfolio();
     else if (activeTab === 'profile') loadProfile();
     else loadInitial();
@@ -1001,7 +1174,22 @@ document.addEventListener('DOMContentLoaded', () => {
         tg.expand();
     }
 
+    // Theme
+    loadTheme();
+    const themeBtn = document.getElementById('theme-toggle');
+    if (themeBtn) themeBtn.onclick = toggleTheme;
+
     setupBottomNav();
+
+    // Timeframe tabs
+    document.querySelectorAll('.timeframe-tab').forEach(btn => {
+        btn.onclick = () => switchTimeframe(btn.dataset.timeframe);
+    });
+
+    // Leaderboard period tabs
+    document.querySelectorAll('.leaderboard-period-tab').forEach(btn => {
+        btn.onclick = () => loadLeaderboard(btn.dataset.period);
+    });
 
     // Bet modal
     document.getElementById('bet-modal-close').onclick = closeBetModal;
@@ -1015,7 +1203,12 @@ document.addEventListener('DOMContentLoaded', () => {
 
     document.querySelectorAll('#bet-modal .amount-quick button').forEach((btn) => {
         btn.onclick = () => {
-            amountInput.value = btn.dataset.amount;
+            if (btn.dataset.amount === 'max') {
+                // MAX = текущий баланс
+                amountInput.value = state.me ? Math.floor(state.me.balance_rub) : '';
+            } else {
+                amountInput.value = btn.dataset.amount;
+            }
             updateQuote();
         };
     });

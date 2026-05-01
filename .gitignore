@@ -8,3 +8,12 @@ __pycache__/
 *.log
 cloudflared.exe
 cloudflared
+*.exe
+/data/
+.pytest_cache/
+.ruff_cache/
+dist/
+build/
+*.egg-info/
+miniapp/images/uploads/*
+!miniapp/images/uploads/.gitkeep

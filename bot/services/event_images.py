@@ -60,6 +60,14 @@ def _is_real_photo(url: str | None) -> bool:
     return url.strip().startswith(("http://", "https://"))
 
 
+def has_real_photo(url: str | None) -> bool:
+    """True если URL — внешнее фото (не /miniapp/ SVG/плейсхолдер)."""
+    if not url:
+        return False
+    u = url.strip()
+    return u.startswith("https://") and "/miniapp/" not in u
+
+
 def _is_valid_url(url: str | None) -> bool:
     if not url:
         return False
@@ -72,8 +80,13 @@ async def pick_event_image(
     category_slug: str | None,
     prefilled: str | None = None,
     slug: str | None = None,
-) -> str:
-    """Возвращает image_url для события — гарантированно непустой."""
+    strict: bool = False,
+) -> str | None:
+    """
+    Возвращает image_url для события.
+    strict=False (по умолчанию): гарантированно возвращает непустую строку (SVG как fallback).
+    strict=True: возвращает None если настоящего фото не нашлось.
+    """
     if _is_real_photo(prefilled):
         logger.info(f"Image: prefilled (news) for '{title[:50]}'")
         return prefilled  # type: ignore[return-value]
@@ -100,6 +113,10 @@ async def pick_event_image(
         if _is_real_photo(wiki_url):
             logger.info(f"Image: wiki query '{search_query[:40]}' for '{title[:40]}'")
             return wiki_url  # type: ignore[return-value]
+
+    if strict:
+        logger.info(f"Image: no real photo found (strict mode) for '{title[:50]}'")
+        return None
 
     fallback = category_fallback(category_slug)
     logger.info(f"Image: SVG fallback ({category_slug}) for '{title[:50]}'")
