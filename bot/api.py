@@ -463,8 +463,10 @@ async def my_bets(
     for bet in bets:
         event_r = await session.execute(select(Event).where(Event.id == bet.event_id))
         outcome_r = await session.execute(select(Outcome).where(Outcome.id == bet.outcome_id))
-        event = event_r.scalar_one()
-        outcome = outcome_r.scalar_one()
+        event = event_r.scalar_one_or_none()
+        outcome = outcome_r.scalar_one_or_none()
+        if not event or not outcome:
+            continue  # битая ставка — пропускаем, не ломаем весь список
 
         response.append({
             "id": bet.id,
@@ -476,6 +478,7 @@ async def my_bets(
             "is_settled": bet.is_settled,
             "payout_rub": float(bet.payout_rub) if bet.payout_rub else None,
             "created_at": bet.created_at.isoformat(),
+            "timeframe": event.timeframe,
         })
     return response
 

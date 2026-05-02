@@ -62,6 +62,13 @@ async def cmd_start(message: Message, command: CommandObject | None = None) -> N
                 reply_markup=kb.main_menu_kb(),
                 parse_mode="HTML",
             )
+            # Отдельное уведомление о начисленном бонусе
+            await message.answer(
+                f"🎁 <b>Вам начислено 500 монет!</b>\n\n"
+                f"Это стартовый бонус — используй его, чтобы опробовать площадку.\n"
+                f"Твой баланс: <b>500 монет</b> 💰",
+                parse_mode="HTML",
+            )
         else:
             stats = await get_user_stats(session, user)
             await message.answer(

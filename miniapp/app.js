@@ -209,12 +209,14 @@ async function loadActivityTicker() {
             </div>
         `).join('');
         ticker.style.display = '';
-        // Auto-scroll every 4s
+        // Auto-scroll every 4s — скроллим только сам контейнер, не страницу
         let idx = 0;
         setInterval(() => {
             idx = (idx + 1) % items.length;
             const item = scroll.children[idx];
-            if (item) item.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'start' });
+            if (item) {
+                scroll.scrollTo({ left: item.offsetLeft, behavior: 'smooth' });
+            }
         }, 4000);
     } catch (_) {
         ticker.style.display = 'none';
@@ -629,7 +631,8 @@ async function loadPortfolio() {
 
             let statusHtml = '';
             if (!bet.is_settled) {
-                statusHtml = `<span class="bet-status pending">В игре</span>`;
+                const badge = bet.timeframe === 'intraday' ? '⚡ В игре' : '🕐 В игре';
+                statusHtml = `<span class="bet-status pending">${badge}</span>`;
             } else if (bet.payout_rub > 0) {
                 statusHtml = `
                     <div style="text-align:right">
