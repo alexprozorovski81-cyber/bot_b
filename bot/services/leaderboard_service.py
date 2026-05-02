@@ -6,7 +6,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
-from sqlalchemy import func, select
+from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.models import Bet, UserStats
@@ -41,7 +41,7 @@ async def refresh_user_stats(session: AsyncSession) -> int:
                 func.coalesce(Bet.payout_rub, Decimal("0")) - Bet.amount_rub
             ).label("net_profit"),
             func.sum(
-                func.case((Bet.payout_rub > 0, 1), else_=0)
+                case((Bet.payout_rub > 0, 1), else_=0)
             ).label("win_count"),
         ).where(
             Bet.is_settled == True  # noqa: E712
