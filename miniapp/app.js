@@ -1174,6 +1174,40 @@ document.addEventListener('DOMContentLoaded', () => {
         tg.expand();
     }
 
+    // Блокируем открытие вне Telegram — без initData нельзя авторизоваться
+    if (!tg?.initData) {
+        // Получаем username бота для ссылки
+        fetch('/api/config').then(r => r.json()).then(cfg => {
+            const botLink = `https://t.me/${cfg.bot_username || 'predictbet_bot'}`;
+            document.querySelector('.app').innerHTML = `
+                <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;
+                            height:100vh;padding:32px;text-align:center;font-family:Inter,sans-serif">
+                    <div style="font-size:64px;margin-bottom:16px">🔒</div>
+                    <h2 style="margin:0 0 8px;font-size:20px;font-weight:700">Открой через Telegram</h2>
+                    <p style="color:#6b7280;font-size:14px;margin:0 0 24px;line-height:1.5">
+                        PredictBet работает только как Telegram Mini App.<br>
+                        Найди бота и нажми кнопку «Открыть приложение».
+                    </p>
+                    <a href="${botLink}"
+                       style="background:#2563eb;color:#fff;padding:12px 28px;border-radius:12px;
+                              text-decoration:none;font-weight:600;font-size:15px">
+                        Открыть бота ↗
+                    </a>
+                </div>`;
+        }).catch(() => {
+            document.querySelector('.app').innerHTML = `
+                <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;
+                            height:100vh;padding:32px;text-align:center;font-family:Inter,sans-serif">
+                    <div style="font-size:64px;margin-bottom:16px">🔒</div>
+                    <h2 style="margin:0 0 8px;font-size:20px;font-weight:700">Открой через Telegram</h2>
+                    <p style="color:#6b7280;font-size:14px;margin:0">
+                        PredictBet работает только как Telegram Mini App.
+                    </p>
+                </div>`;
+        });
+        return;
+    }
+
     // Theme
     loadTheme();
     const themeBtn = document.getElementById('theme-toggle');

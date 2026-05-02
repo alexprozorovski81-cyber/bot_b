@@ -45,6 +45,22 @@ app.add_middleware(
 )
 
 
+@app.middleware("http")
+async def no_cache_api(request: Request, call_next):
+    """Запрещаем кеширование /api/* ответов браузером и прокси."""
+    response = await call_next(request)
+    if request.url.path.startswith("/api/"):
+        response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate"
+        response.headers["Pragma"] = "no-cache"
+    return response
+
+
+@app.get("/api/config")
+async def public_config():
+    """Публичная конфигурация для Mini App (не требует авторизации)."""
+    return {"bot_username": settings.bot_username}
+
+
 @app.get("/health")
 async def healthcheck():
     """Healthcheck для мониторинга и load balancer."""
@@ -94,9 +110,9 @@ def validate_init_data(init_data: str) -> dict:
         if not hmac.compare_digest(calculated_hash, received_hash):
             raise ValueError("Невалидный hash")
 
-        # Проверяем свежесть данных — не старше 1 часа
+        # Проверяем свежесть данных — не старше 24 часов (стандарт Telegram)
         auth_date = int(parsed.get("auth_date", 0))
-        if auth_date == 0 or time.time() - auth_date > 3600:
+        if auth_date == 0 or time.time() - auth_date > 86400:
             raise ValueError("initData expired")
 
         user_json = parsed.get("user")
@@ -117,13 +133,16 @@ async def get_current_user(
     x_forwarded_for: Annotated[str | None, Header(alias="X-Forwarded-For")] = None,
 ) -> dict:
     """Зависимость FastAPI — текущий пользователь из заголовка."""
+    # dev_mode разрешён только с localhost (защита от случайного включения на проде)
     if settings.dev_mode and not x_telegram_init_data:
-        return {
-            "id": settings.dev_telegram_id, "first_name": "Dev", "username": "dev",
-            "_ip": "127.0.0.1", "_fp": None,
-        }
+        client_host = request.client.host if request.client else ""
+        if client_host in ("127.0.0.1", "::1", "localhost"):
+            return {
+                "id": settings.dev_telegram_id, "first_name": "Dev", "username": "dev",
+                "_ip": "127.0.0.1", "_fp": None,
+            }
     if not x_telegram_init_data:
-        raise HTTPException(status_code=401, detail="Invalid initData")
+        raise HTTPException(status_code=401, detail="Unauthorized: open via Telegram")
     user_data = validate_init_data(x_telegram_init_data)
     # Добавляем IP и fingerprint для anti-fraud
     ip = (x_forwarded_for.split(",")[0].strip() if x_forwarded_for
