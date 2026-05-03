@@ -173,6 +173,31 @@ def calculate_payout(
     return net, fee
 
 
+def calculate_sell_return(
+    q: Sequence[Decimal],
+    b: Decimal,
+    outcome_index: int,
+    shares_to_sell: Decimal,
+) -> Decimal:
+    """
+    Выручка от продажи shares_to_sell акций обратно рынку.
+
+    return = C(q) − C(q − Δq)
+
+    Returns:
+        Сумма в рублях, которую получит пользователь (Decimal с 2 знаками).
+    """
+    if shares_to_sell <= 0:
+        return Decimal("0.00")
+
+    cost_before = cost_function(q, b)
+    new_q = list(q)
+    new_q[outcome_index] = max(Decimal("0"), new_q[outcome_index] - shares_to_sell)
+    cost_after = cost_function(new_q, b)
+
+    return max(Decimal("0.00"), (cost_before - cost_after).quantize(Decimal("0.01")))
+
+
 def max_platform_loss(b: Decimal, n_outcomes: int) -> Decimal:
     """
     Максимальный убыток платформы по LMSR ограничен:

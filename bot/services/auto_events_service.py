@@ -24,7 +24,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from bot.config import settings
 from db.database import AsyncSessionLocal
-from db.models import Category, Event, EventStatus, Outcome
+from db.models import Category, Event, EventStatus, EventType, Outcome
 
 logger = logging.getLogger(__name__)
 
@@ -297,36 +297,52 @@ def _detect_category(title: str, source_category: str) -> str:
     return source_category
 
 
-def _get_deadline(category: str, title: str) -> datetime:
-    """Определяет дедлайн события по категории и ключевым словам в заголовке."""
+# Коэффициенты для FIXED_ODDS по категории (маржа ~5-10%)
+_ODDS_BY_CATEGORY: dict[str, tuple[Decimal, Decimal]] = {
+    "politics": (Decimal("1.85"), Decimal("1.95")),
+    "sports":   (Decimal("1.90"), Decimal("1.90")),
+    "crypto":   (Decimal("1.75"), Decimal("2.05")),
+    "economy":  (Decimal("1.85"), Decimal("1.95")),
+}
+_DEFAULT_ODDS = (Decimal("1.85"), Decimal("1.95"))
+
+
+def _get_deadline_and_type(category: str, title: str) -> tuple[datetime, EventType]:
+    """
+    Определяет дедлайн и тип рынка для авто-события из RSS.
+
+    Все события из новостных RSS — краткосрочные FIXED_ODDS (1-30 дней),
+    потому что порождены сегодняшними новостями.
+    """
     now = datetime.now(timezone.utc)
     low = title.lower()
 
-    # Конкретные спортивные события — более короткий горизонт
     if category == "sports":
-        if any(kw in low for kw in ["финал", "полуфинал", "матч", "бой", "гран-при"]):
-            return now + timedelta(days=21)
-        return now + timedelta(days=60)
+        # Конкретный матч/бой — 7 дней; общий спорт — 14 дней
+        if any(kw in low for kw in ["финал", "полуфинал", "матч", "бой", "гран-при", "поединок"]):
+            return now + timedelta(days=7), EventType.FIXED_ODDS
+        return now + timedelta(days=14), EventType.FIXED_ODDS
 
     if category == "crypto":
-        return now + timedelta(days=90)
+        return now + timedelta(days=21), EventType.FIXED_ODDS
 
     if category == "economy":
-        # Заседание ЦБ — ближайший горизонт
         if "ключевая ставка" in low or "заседани" in low:
-            return now + timedelta(days=45)
-        return now + timedelta(days=90)
+            return now + timedelta(days=14), EventType.FIXED_ODDS
+        return now + timedelta(days=21), EventType.FIXED_ODDS
 
     if category == "politics":
-        # Переговоры/встречи — короче
-        if any(kw in low for kw in ["переговоры", "встреч", "саммит"]):
-            return now + timedelta(days=60)
-        return now + timedelta(days=180)
+        if any(kw in low for kw in ["переговоры", "встреч", "саммит", "подпишет", "заявит"]):
+            return now + timedelta(days=14), EventType.FIXED_ODDS
+        return now + timedelta(days=21), EventType.FIXED_ODDS
 
-    if category == "tech":
-        return now + timedelta(days=120)
+    return now + timedelta(days=21), EventType.FIXED_ODDS
 
-    return now + timedelta(days=90)
+
+def _get_deadline(category: str, title: str) -> datetime:
+    """Обратная совместимость — используется в тестах."""
+    deadline, _ = _get_deadline_and_type(category, title)
+    return deadline
 
 
 # ─── Slug из заголовка ───────────────────────────────────────────────────────
@@ -348,6 +364,9 @@ async def create_auto_event(
     article_url: str | None,
     deadline: datetime,
     description: str = "",
+    event_type: EventType = EventType.FIXED_ODDS,
+    odds_yes: Decimal | None = None,
+    odds_no: Decimal | None = None,
 ) -> Event | None:
     """Создаёт событие в БД. Возвращает None если slug уже есть."""
     from bot.services.event_images import pick_event_image
@@ -406,6 +425,9 @@ async def create_auto_event(
         liquidity_b=Decimal("1000.00"),
         closes_at=deadline,
         resolves_at=deadline + timedelta(days=7),
+        event_type=event_type,
+        odds_yes=odds_yes,
+        odds_no=odds_no,
     )
     session.add(event)
     await session.flush()
@@ -443,15 +465,16 @@ async def _notify_admins_moderation(event: Event) -> None:
 
 # ─── Главная точка входа (вызывается из cron) ────────────────────────────────
 
-async def process_auto_events(suggestions: list[dict]) -> int:
+async def process_auto_events(suggestions: list[dict]) -> tuple[int, set[str]]:
     """
     Принимает список новостей из RSS, фильтрует, генерирует вопросы и публикует события.
-    Возвращает количество созданных событий.
+    Возвращает (количество созданных событий, множество hash авто-опубликованных новостей).
     """
     if not settings.auto_events_enabled:
-        return 0
+        return 0, set()
 
     created = 0
+    auto_hashes: set[str] = set()
     limit = settings.auto_events_per_run
 
     async with AsyncSessionLocal() as session:
@@ -482,8 +505,9 @@ async def process_auto_events(suggestions: list[dict]) -> int:
                 logger.debug("Could not generate question for: %s", title[:60])
                 continue
 
-            # 4. Дедлайн
-            deadline = _get_deadline(category, title)
+            # 4. Дедлайн + тип рынка
+            deadline, evt_type = _get_deadline_and_type(category, title)
+            odds_yes, odds_no = _ODDS_BY_CATEGORY.get(category, _DEFAULT_ODDS)
 
             # 5. Создаём событие
             event = await create_auto_event(
@@ -493,14 +517,17 @@ async def process_auto_events(suggestions: list[dict]) -> int:
                 image_url=item.get("image_url"),
                 article_url=item.get("article_url"),
                 deadline=deadline,
+                event_type=evt_type,
+                odds_yes=odds_yes,
+                odds_no=odds_no,
             )
 
             if event:
                 created += 1
-                # Уведомляем админов
+                auto_hashes.add(item["hash"])
                 await _notify_admins_about_new_event(event, item.get("source", ""))
 
-    return created
+    return created, auto_hashes
 
 
 async def _notify_admins_about_new_event(event: Event, source: str) -> None:

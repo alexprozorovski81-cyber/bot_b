@@ -1,14 +1,19 @@
 """
 Сервис разрешения событий и выплат.
 
-Когда событие разрешается:
-  1. Все ставки на победивший исход → выплата (1 ₽ за акцию минус комиссия)
-  2. Все ставки на проигравшие исходы → 0 ₽ (деньги уже списаны)
-  3. Каждому игроку идёт уведомление в Telegram
+Поток для ВСЕХ событий:
+  1. resolve_event()  → EventStatus.PENDING_VERIFY (исход сохранён, выплат нет)
+  2. Admin подтверждает → confirm_resolution() → RESOLVED + выплаты
+  3. Admin отклоняет  → reject_resolution()  → LOCKED (пересмотр)
+
+Логика выплат:
+  MARKET (LMSR)    — 1 ₽ за акцию минус комиссия
+  FIXED_ODDS       — ставка × зафиксированный коэффициент
 """
 import logging
 from decimal import Decimal
 
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -17,10 +22,9 @@ from bot.config import settings
 from bot.notifier import notify_user
 from bot.services import market_engine
 from db.models import (
-    Bet, Event, EventStatus, Outcome, Transaction,
+    Bet, Event, EventStatus, EventType, Outcome, Transaction,
     TransactionType, User,
 )
-
 
 logger = logging.getLogger(__name__)
 
@@ -31,28 +35,19 @@ async def resolve_event(
     winning_outcome_id: int,
 ) -> dict:
     """
-    Разрешает событие и проводит выплаты.
-
-    Args:
-        session: активная сессия БД
-        event_id: ID события
-        winning_outcome_id: ID победившего исхода
-
-    Returns:
-        Сводка: {winners_count, losers_count, total_payout, fees_collected}
+    Переводит событие в PENDING_VERIFY и уведомляет admin'а.
+    Фактические выплаты происходят только после confirm_resolution().
     """
-    # 1. Загружаем событие
-    event_result = await session.execute(
-        select(Event).where(Event.id == event_id)
-    )
+    event_result = await session.execute(select(Event).where(Event.id == event_id))
     event = event_result.scalar_one_or_none()
     if not event:
         raise ValueError(f"Event {event_id} not found")
 
     if event.status == EventStatus.RESOLVED:
         raise ValueError("Событие уже разрешено")
+    if event.status == EventStatus.PENDING_VERIFY:
+        raise ValueError("Событие уже ожидает подтверждения")
 
-    # 2. Проверяем что winning_outcome принадлежит этому событию
     outcome_result = await session.execute(
         select(Outcome).where(
             Outcome.id == winning_outcome_id,
@@ -63,7 +58,34 @@ async def resolve_event(
     if not winning_outcome:
         raise ValueError("Этот исход не принадлежит указанному событию")
 
-    # 3. Загружаем все ставки события
+    event.status = EventStatus.PENDING_VERIFY
+    event.winning_outcome_id = winning_outcome_id
+    await session.commit()
+
+    await _notify_admins_pending_verify(event, winning_outcome)
+
+    logger.info("Event %s → PENDING_VERIFY, outcome=%s", event_id, winning_outcome.title)
+    return {"status": "pending_verify", "winning_outcome": winning_outcome.title}
+
+
+async def confirm_resolution(session: AsyncSession, event_id: int) -> dict:
+    """
+    Выполняет фактические выплаты и переводит событие в RESOLVED.
+    Вызывается из callback admin'а.
+    """
+    event_result = await session.execute(select(Event).where(Event.id == event_id))
+    event = event_result.scalar_one_or_none()
+    if not event:
+        raise ValueError(f"Event {event_id} not found")
+    if event.status != EventStatus.PENDING_VERIFY:
+        raise ValueError(f"Событие не в статусе PENDING_VERIFY: {event.status}")
+
+    winning_outcome_id = event.winning_outcome_id
+    outcome_result = await session.execute(
+        select(Outcome).where(Outcome.id == winning_outcome_id)
+    )
+    winning_outcome = outcome_result.scalar_one()
+
     bets_result = await session.execute(
         select(Bet).where(
             Bet.event_id == event_id,
@@ -81,18 +103,12 @@ async def resolve_event(
     for bet in bets:
         is_winner = bet.outcome_id == winning_outcome_id
 
-        # Достаём пользователя
-        user_result = await session.execute(
-            select(User).where(User.id == bet.user_id)
-        )
+        user_result = await session.execute(select(User).where(User.id == bet.user_id))
         user = user_result.scalar_one()
 
         if is_winner:
-            payout, fee = market_engine.calculate_payout(
-                bet.shares, True, fee_pct
-            )
+            payout, fee = _calc_payout(event, bet, fee_pct)
 
-            # Зачисляем выигрыш
             balance_before = user.balance_rub
             user.balance_rub += payout
             balance_after = user.balance_rub
@@ -100,7 +116,6 @@ async def resolve_event(
             bet.is_settled = True
             bet.payout_rub = payout
 
-            # Транзакции
             fee_note = f" (комиссия {fee:.2f})" if fee > 0 else ""
             session.add(Transaction(
                 user_id=user.id,
@@ -116,18 +131,14 @@ async def resolve_event(
             total_fees += fee
             winners.append((user, bet, payout, fee))
         else:
-            # Проигрыш — деньги уже были списаны при ставке
             bet.is_settled = True
             bet.payout_rub = Decimal("0")
             losers.append((user, bet))
 
-    # 4. Обновляем событие
     event.status = EventStatus.RESOLVED
-    event.winning_outcome_id = winning_outcome_id
-
     await session.commit()
 
-    # 5. Уведомления (после commit — чтобы данные в БД точно были)
+    # Уведомления после commit
     for user, bet, payout, fee in winners:
         await notify_user(
             user.telegram_id,
@@ -142,11 +153,6 @@ async def resolve_event(
         )
 
     for user, bet in losers:
-        # Достаём название проигравшего исхода
-        out_result = await session.execute(
-            select(Outcome).where(Outcome.id == bet.outcome_id)
-        )
-        out = out_result.scalar_one()
         await notify_user(
             user.telegram_id,
             texts.BET_LOST.format(
@@ -156,11 +162,19 @@ async def resolve_event(
             sticker_key="lose",
         )
 
-    logger.info(
-        f"Event {event_id} resolved: {len(winners)} winners, "
-        f"{len(losers)} losers, payout={total_payout}, fees={total_fees}"
-    )
+    # Settle express legs for this event
+    try:
+        from bot.services.express_service import settle_express_legs
+        from db.database import AsyncSessionLocal
+        async with AsyncSessionLocal() as s:
+            await settle_express_legs(event_id, winning_outcome_id, s)
+    except Exception as exc:
+        logger.warning("Express settlement error for event %s: %s", event_id, exc)
 
+    logger.info(
+        "Event %s RESOLVED: %d winners, %d losers, payout=%s, fees=%s",
+        event_id, len(winners), len(losers), total_payout, total_fees,
+    )
     return {
         "winners_count": len(winners),
         "losers_count": len(losers),
@@ -170,17 +184,31 @@ async def resolve_event(
     }
 
 
+async def reject_resolution(session: AsyncSession, event_id: int) -> None:
+    """
+    Отклоняет предложенный исход, возвращает событие в LOCKED.
+    Admin пересматривает вручную.
+    """
+    event_result = await session.execute(select(Event).where(Event.id == event_id))
+    event = event_result.scalar_one_or_none()
+    if not event:
+        raise ValueError(f"Event {event_id} not found")
+    if event.status != EventStatus.PENDING_VERIFY:
+        raise ValueError(f"Событие не в статусе PENDING_VERIFY: {event.status}")
+
+    event.status = EventStatus.LOCKED
+    event.winning_outcome_id = None
+    await session.commit()
+    logger.info("Event %s resolution rejected → back to LOCKED", event_id)
+
+
 async def cancel_event(
     session: AsyncSession,
     event_id: int,
     reason: str = "Отменено администратором",
 ) -> dict:
-    """
-    Отменяет событие и возвращает все ставки пользователям.
-    """
-    event_result = await session.execute(
-        select(Event).where(Event.id == event_id)
-    )
+    """Отменяет событие и возвращает все ставки пользователям."""
+    event_result = await session.execute(select(Event).where(Event.id == event_id))
     event = event_result.scalar_one_or_none()
     if not event:
         raise ValueError(f"Event {event_id} not found")
@@ -200,9 +228,7 @@ async def cancel_event(
     total_refund = Decimal("0")
 
     for bet in bets:
-        user_result = await session.execute(
-            select(User).where(User.id == bet.user_id)
-        )
+        user_result = await session.execute(select(User).where(User.id == bet.user_id))
         user = user_result.scalar_one()
 
         balance_before = user.balance_rub
@@ -210,7 +236,7 @@ async def cancel_event(
         balance_after = user.balance_rub
 
         bet.is_settled = True
-        bet.payout_rub = bet.amount_rub  # вернули полную сумму
+        bet.payout_rub = bet.amount_rub
 
         session.add(Transaction(
             user_id=user.id,
@@ -237,7 +263,49 @@ async def cancel_event(
             f"Возвращено: <b>{bet.amount_rub:.2f} ₽</b>",
         )
 
-    return {
-        "refunded_count": len(refunded),
-        "total_refund": total_refund,
-    }
+    return {"refunded_count": len(refunded), "total_refund": total_refund}
+
+
+# ── Internal helpers ──────────────────────────────────────────────────────────
+
+def _calc_payout(event: Event, bet: Bet, fee_pct: Decimal) -> tuple[Decimal, Decimal]:
+    """Рассчитывает выплату в зависимости от типа события."""
+    if event.event_type == EventType.FIXED_ODDS:
+        gross = (bet.amount_rub * bet.avg_odds).quantize(Decimal("0.01"))
+        fee = (gross * fee_pct / Decimal("100")).quantize(Decimal("0.01"))
+        return (gross - fee).quantize(Decimal("0.01")), fee
+    else:
+        return market_engine.calculate_payout(bet.shares, True, fee_pct)
+
+
+async def _notify_admins_pending_verify(event: Event, winning_outcome: Outcome) -> None:
+    try:
+        from bot import notifier
+        bot = notifier._bot
+        if not bot or not settings.admin_id_list:
+            return
+
+        kb = InlineKeyboardMarkup(inline_keyboard=[[
+            InlineKeyboardButton(
+                text="✅ Подтвердить выплаты",
+                callback_data=f"resolve:confirm:{event.id}",
+            ),
+            InlineKeyboardButton(
+                text="❌ Отменить итог",
+                callback_data=f"resolve:reject:{event.id}",
+            ),
+        ]])
+        event_type_label = "📊 LMSR" if event.event_type == EventType.MARKET else "📌 Фикс. коэф."
+        text = (
+            f"⏳ <b>Ожидает подтверждения</b> [{event_type_label}]\n\n"
+            f"«{event.title}»\n\n"
+            f"Победивший исход: <b>{winning_outcome.title}</b>\n\n"
+            f"Подтверди выплаты пользователям:"
+        )
+        for admin_id in settings.admin_id_list:
+            try:
+                await bot.send_message(admin_id, text, parse_mode="HTML", reply_markup=kb)
+            except Exception as e:
+                logger.warning("notify admin %s failed: %s", admin_id, e)
+    except Exception as e:
+        logger.warning("_notify_admins_pending_verify failed: %s", e)

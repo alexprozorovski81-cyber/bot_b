@@ -28,7 +28,9 @@ from sqlalchemy import func, select
 
 from bot.config import settings
 from bot.services.event_images import pick_event_image
-from bot.services.resolution_service import resolve_event, cancel_event
+from bot.services.resolution_service import (
+    resolve_event, cancel_event, confirm_resolution, reject_resolution,
+)
 from db.database import AsyncSessionLocal
 from db.models import (
     Bet, Category, Event, EventStatus, Outcome,
@@ -1206,3 +1208,50 @@ async def reject_withdrawal_reason(message: Message, state: FSMContext) -> None:
         )
     except ValueError as e:
         await message.answer(f"Ошибка: {e}")
+
+
+# ── Подтверждение / отклонение выплат после резолва ─────────────────────────
+
+@router.callback_query(F.data.startswith("resolve:confirm:"))
+async def resolution_confirm(callback: CallbackQuery) -> None:
+    if not is_admin(callback.from_user.id):
+        await callback.answer("Только для администратора", show_alert=True)
+        return
+
+    event_id = int(callback.data.split(":")[2])
+    await callback.answer("⏳ Провожу выплаты...")
+
+    try:
+        async with AsyncSessionLocal() as session:
+            result = await confirm_resolution(session, event_id)
+        await callback.message.edit_text(
+            f"✅ <b>Выплаты проведены</b>\n\n"
+            f"Событие #{event_id}\n"
+            f"Победители: {result['winners_count']}\n"
+            f"Проигравших: {result['losers_count']}\n"
+            f"Выплачено: {result['total_payout']:.2f} ₽\n"
+            f"Комиссия: {result['fees_collected']:.2f} ₽",
+            parse_mode="HTML",
+        )
+    except ValueError as e:
+        await callback.message.answer(f"❌ Ошибка: {e}")
+
+
+@router.callback_query(F.data.startswith("resolve:reject:"))
+async def resolution_reject(callback: CallbackQuery) -> None:
+    if not is_admin(callback.from_user.id):
+        await callback.answer("Только для администратора", show_alert=True)
+        return
+
+    event_id = int(callback.data.split(":")[2])
+    try:
+        async with AsyncSessionLocal() as session:
+            await reject_resolution(session, event_id)
+        await callback.message.edit_text(
+            f"↩️ Итог события #{event_id} <b>отклонён</b>.\n"
+            f"Событие возвращено в LOCKED. Разреши вручную: <code>/resolve {event_id}</code>",
+            parse_mode="HTML",
+        )
+        await callback.answer("Итог отклонён")
+    except ValueError as e:
+        await callback.answer(f"Ошибка: {e}", show_alert=True)

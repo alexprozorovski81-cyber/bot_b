@@ -9,6 +9,7 @@ from decimal import Decimal
 from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from db.database import is_sqlite
 from db.models import Bet, UserStats
 
 logger = logging.getLogger(__name__)
@@ -24,6 +25,11 @@ async def refresh_user_stats(session: AsyncSession) -> int:
 
     Возвращает количество обновлённых/созданных строк.
     """
+    if is_sqlite():
+        from sqlalchemy.dialects.sqlite import insert as dialect_insert
+    else:
+        from sqlalchemy.dialects.postgresql import insert as dialect_insert
+
     now = datetime.now(timezone.utc)
     periods: dict[str, datetime | None] = {
         "week": now - timedelta(days=7),
@@ -55,37 +61,32 @@ async def refresh_user_stats(session: AsyncSession) -> int:
         result = await session.execute(bet_query)
         rows = result.all()
 
-        for row in rows:
-            user_id = row.user_id
-            net_profit = Decimal(str(row.net_profit or 0))
-            bets_count = int(row.bets_count or 0)
-            win_count = int(row.win_count or 0)
+        if not rows:
+            continue
 
-            existing = await session.execute(
-                select(UserStats).where(
-                    UserStats.user_id == user_id,
-                    UserStats.period == period_key,
-                )
-            )
-            stats = existing.scalar_one_or_none()
+        values = [
+            {
+                "user_id": row.user_id,
+                "period": period_key,
+                "net_profit": Decimal(str(row.net_profit or 0)),
+                "bets_count": int(row.bets_count or 0),
+                "win_count": int(row.win_count or 0),
+                "updated_at": now,
+            }
+            for row in rows
+        ]
 
-            if stats:
-                stats.net_profit = net_profit
-                stats.bets_count = bets_count
-                stats.win_count = win_count
-                stats.updated_at = now
-            else:
-                session.add(
-                    UserStats(
-                        user_id=user_id,
-                        period=period_key,
-                        net_profit=net_profit,
-                        bets_count=bets_count,
-                        win_count=win_count,
-                        updated_at=now,
-                    )
-                )
-            upserted += 1
+        stmt = dialect_insert(UserStats).values(values).on_conflict_do_update(
+            index_elements=["user_id", "period"],
+            set_={
+                "net_profit": dialect_insert(UserStats).excluded.net_profit,
+                "bets_count": dialect_insert(UserStats).excluded.bets_count,
+                "win_count": dialect_insert(UserStats).excluded.win_count,
+                "updated_at": dialect_insert(UserStats).excluded.updated_at,
+            },
+        )
+        await session.execute(stmt)
+        upserted += len(values)
 
     await session.commit()
     logger.debug("Leaderboard refresh: %d rows upserted", upserted)

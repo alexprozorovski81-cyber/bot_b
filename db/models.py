@@ -19,12 +19,19 @@ class Base(DeclarativeBase):
 
 class EventStatus(str, PyEnum):
     """Статус события на платформе."""
-    DRAFT = "draft"            # Черновик (не опубликован)
-    MODERATION = "moderation"  # Ждёт фото/проверки admin'а, юзерам не виден
-    ACTIVE = "active"          # Можно ставить
-    LOCKED = "locked"          # Ставки закрыты, ждём результата
-    RESOLVED = "resolved"      # Результат определён, выплаты произведены
-    CANCELLED = "cancelled"    # Отменено, средства возвращены
+    DRAFT = "draft"                    # Черновик (не опубликован)
+    MODERATION = "moderation"          # Ждёт фото/проверки admin'а, юзерам не виден
+    ACTIVE = "active"                  # Можно ставить
+    LOCKED = "locked"                  # Ставки закрыты, ждём результата
+    PENDING_VERIFY = "pending_verify"  # Исход определён, ждёт подтверждения admin'а
+    RESOLVED = "resolved"              # Выплаты произведены
+    CANCELLED = "cancelled"            # Отменено, средства возвращены
+
+
+class EventType(str, PyEnum):
+    """Тип рынка события."""
+    MARKET = "market"          # LMSR биржа (Polymarket-стиль), долгосрочные
+    FIXED_ODDS = "fixed_odds"  # Фиксированные коэффициенты (1xbet-стиль), краткосрочные
 
 
 class TransactionType(str, PyEnum):
@@ -156,6 +163,13 @@ class Event(Base):
     # Источник и параметры для авто-разрешения оракулом
     auto_resolve_source: Mapped[str | None] = mapped_column(String(64), nullable=True)
     auto_resolve_payload: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # Тип рынка: MARKET (LMSR) или FIXED_ODDS (фиксированные коэффициенты)
+    event_type: Mapped[str] = mapped_column(String(16), default="market", nullable=False)
+
+    # Коэффициенты для FIXED_ODDS событий (null для MARKET)
+    odds_yes: Mapped[Decimal | None] = mapped_column(Numeric(6, 2), nullable=True)
+    odds_no: Mapped[Decimal | None] = mapped_column(Numeric(6, 2), nullable=True)
 
     category: Mapped["Category"] = relationship(back_populates="events")
     outcomes: Mapped[list["Outcome"]] = relationship(
@@ -392,3 +406,41 @@ class RegistrationLog(Base):
 
 
 Index("ix_registration_log_ip_created", RegistrationLog.ip_address, RegistrationLog.created_at)
+
+
+class Express(Base):
+    """Экспресс-ставка: комбинация нескольких FIXED_ODDS событий."""
+    __tablename__ = "expresses"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    stake: Mapped[Decimal] = mapped_column(Numeric(18, 2))
+    total_odds: Mapped[Decimal] = mapped_column(Numeric(10, 4))
+    potential_payout: Mapped[Decimal] = mapped_column(Numeric(18, 2))
+    # active / won / lost / cancelled
+    status: Mapped[str] = mapped_column(String(16), default="active", index=True)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+    settled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    user: Mapped["User"] = relationship()
+    legs: Mapped[list["ExpressLeg"]] = relationship(back_populates="express")
+
+
+class ExpressLeg(Base):
+    """Одна нога экспресс-ставки."""
+    __tablename__ = "express_legs"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    express_id: Mapped[int] = mapped_column(ForeignKey("expresses.id"), index=True)
+    event_id: Mapped[int] = mapped_column(ForeignKey("events.id"), index=True)
+    outcome_id: Mapped[int] = mapped_column(ForeignKey("outcomes.id"))
+    odds: Mapped[Decimal] = mapped_column(Numeric(6, 2))
+    # pending / won / lost / cancelled
+    result: Mapped[str] = mapped_column(String(16), default="pending")
+
+    express: Mapped["Express"] = relationship(back_populates="legs")
+    event: Mapped["Event"] = relationship()
+    outcome: Mapped["Outcome"] = relationship()

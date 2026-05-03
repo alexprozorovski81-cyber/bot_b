@@ -23,13 +23,15 @@ from pydantic import BaseModel
 from bot.config import settings
 from bot.handlers.webhooks import router as webhooks_router
 from bot.services import market_engine
-from bot.services.bet_service import quote_bet, place_bet, BetError
+from bot.services.bet_service import quote_bet, place_bet, sell_bet, BetError
+from bot.services.express_service import create_express, ExpressError
 from bot.services.user_service import get_or_create_user, get_user_stats
 from db.database import AsyncSessionLocal
 from db.models import (
-    Category, Comment, Event, EventStatus, Outcome, Bet, User,
+    Category, Comment, Event, EventStatus, EventType, Outcome, Bet, User,
     Achievement, UserAchievement, WithdrawalRequest, WithdrawStatus,
     Transaction, TransactionType, Payment, PaymentMethod, UserStats,
+    Express, ExpressLeg,
 )
 
 
@@ -934,6 +936,133 @@ async def get_activity(
         }
         for bet, user, event, outcome in rows
     ]
+
+
+# ── Продажа ставки ───────────────────────────────────────────────────────────
+
+class SellBetRequest(BaseModel):
+    bet_id: int
+
+
+@app.post("/api/bet/sell")
+async def bet_sell(
+    body: SellBetRequest,
+    tg_user: Annotated[dict, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Продать ставку до закрытия события. FIXED_ODDS: 75% ставки. MARKET: рыночная цена."""
+    user, _ = await get_or_create_user(
+        session,
+        telegram_id=tg_user["id"],
+        username=tg_user.get("username"),
+        first_name=tg_user.get("first_name"),
+        ip=tg_user.get("_ip"),
+        fingerprint=tg_user.get("_fp"),
+    )
+    try:
+        refund = await sell_bet(session, user.id, body.bet_id)
+    except BetError as e:
+        raise HTTPException(400, str(e))
+
+    return {"refund": float(refund), "new_balance": float(user.balance_rub)}
+
+
+# ── Экспресс-ставки ───────────────────────────────────────────────────────────
+
+class ExpressLegRequest(BaseModel):
+    event_id: int
+    outcome_id: int
+
+
+class PlaceExpressRequest(BaseModel):
+    legs: list[ExpressLegRequest]
+    stake: float
+
+
+@app.post("/api/express/place")
+async def express_place(
+    body: PlaceExpressRequest,
+    tg_user: Annotated[dict, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Создать экспресс-ставку (2-5 ног, только FIXED_ODDS события)."""
+    user, _ = await get_or_create_user(
+        session,
+        telegram_id=tg_user["id"],
+        username=tg_user.get("username"),
+        first_name=tg_user.get("first_name"),
+        ip=tg_user.get("_ip"),
+        fingerprint=tg_user.get("_fp"),
+    )
+    try:
+        express = await create_express(
+            session,
+            user_id=user.id,
+            legs=[{"event_id": l.event_id, "outcome_id": l.outcome_id} for l in body.legs],
+            stake=Decimal(str(body.stake)),
+        )
+    except ExpressError as e:
+        raise HTTPException(400, str(e))
+
+    return {
+        "express_id": express.id,
+        "legs": len(express.legs),
+        "total_odds": float(express.total_odds),
+        "stake": float(express.stake),
+        "potential_payout": float(express.potential_payout),
+        "new_balance": float(user.balance_rub),
+    }
+
+
+@app.get("/api/express/my")
+async def my_expresses(
+    tg_user: Annotated[dict, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+):
+    """История экспресс-ставок пользователя."""
+    user_r = await session.execute(
+        select(User).where(User.telegram_id == tg_user["id"])
+    )
+    user = user_r.scalar_one_or_none()
+    if not user:
+        return []
+
+    expresses_r = await session.execute(
+        select(Express).where(Express.user_id == user.id)
+        .order_by(Express.created_at.desc()).limit(20)
+    )
+    expresses = expresses_r.scalars().all()
+
+    result = []
+    for exp in expresses:
+        legs_r = await session.execute(
+            select(ExpressLeg).where(ExpressLeg.express_id == exp.id)
+        )
+        legs = legs_r.scalars().all()
+        leg_details = []
+        for leg in legs:
+            event_r = await session.execute(select(Event).where(Event.id == leg.event_id))
+            outcome_r = await session.execute(select(Outcome).where(Outcome.id == leg.outcome_id))
+            ev = event_r.scalar_one_or_none()
+            out = outcome_r.scalar_one_or_none()
+            leg_details.append({
+                "event_title": ev.title if ev else "",
+                "outcome_title": out.title if out else "",
+                "odds": float(leg.odds),
+                "result": leg.result,
+            })
+
+        result.append({
+            "id": exp.id,
+            "stake": float(exp.stake),
+            "total_odds": float(exp.total_odds),
+            "potential_payout": float(exp.potential_payout),
+            "status": exp.status,
+            "created_at": exp.created_at.isoformat(),
+            "legs": leg_details,
+        })
+
+    return result
 
 
 # Раздаём Mini App статикой

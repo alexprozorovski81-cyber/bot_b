@@ -1,85 +1,71 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+## Оркестрация Workflow
 
-## Running the project
+### 1. Режим планирования по умолчанию
+- Входи в режим плана для ЛЮБОЙ нетривиальной задачи (3+ шагов или архитектурные решения)
+- Если что-то идёт не так — СТОП и немедленно перепланируй
+- Используй режим плана и для шагов верификации, не только для сборки
+- Пиши детальные спеки заранее — убирай неоднозначность
 
-```bash
-# Install dependencies
-pip install -r requirements.txt
+### 2. Стратегия субагентов
+- Используй субагентов щедро, чтобы держать основной контекст чистым
+- Выгружай ресёрч, разведку и параллельный анализ на субагентов
+- Для сложных задач — кидай больше compute через субагентов
+- Одна задача на одного субагента — для сфокусированного исполнения
 
-# Run everything (bot + API + cron) in one process
-python -m bot.main
+### 3. Цикл самоулучшения
+- После ЛЮБОЙ правки от пользователя: обновляй `tasks/lessons.md` с паттерном
+- Пиши себе правила, которые не дадут повторить ту же ошибку
+- Беспощадно итерируй по этим урокам, пока частота ошибок не упадёт
+- Перечитывай уроки в начале сессии по нужному проекту
 
-# Seed the database manually
-python -m bot.seed
+### 4. Верификация до «готово»
+- Никогда не помечай задачу завершённой, не доказав, что она работает
+- Сравнивай поведение `main` и своих изменений, когда это уместно
+- Спроси себя: «Одобрил бы это staff-инженер?»
+- Запускай тесты, смотри логи, демонстрируй корректность
 
-# Test LMSR market engine math
-python bot/services/market_engine.py
-```
+### 5. Требуй элегантности (в меру)
+- На нетривиальных изменениях: пауза и вопрос «есть ли путь элегантнее?»
+- Если фикс выглядит как костыль: «зная всё, что знаю сейчас, реализуй элегантное решение»
+- Пропускай это для простых очевидных фиксов — не оверинжинирь
+- Подвергай сомнению свою работу прежде, чем её показать
 
-Copy `.env.example` to `.env` and fill in `BOT_TOKEN`, `ADMIN_IDS`, `DATABASE_URL`, etc.
+### 6. Автономная починка багов
+- Получил баг-репорт — просто чини. Не проси, чтобы вели за руку
+- Указывай на логи, ошибки, упавшие тесты — и решай их
+- Ноль переключений контекста со стороны пользователя
+- Иди чини упавшие CI-тесты без подсказок «как»
 
-## Deployment (Amvera)
+---
 
-- Git remote: `https://git.msk0.amvera.ru/jjkkeerr1/predictbet` — push to **`master`** branch to trigger a build
-- Persistence: SQLite **must** live at `/data/predictbet.db` (Amvera's `persistenceMount`). Default in `bot/config.py` is already set to that path; override via `DATABASE_URL` env var if needed
-- `amvera.yml` controls build (`pip`), run command (`python -m bot.main`), port (8000→80), and persistence mount
+## Управление задачами
 
-## Architecture
+1. **Сначала план**: пиши план в `tasks/todo.md` с чекбоксами
+2. **Проверь план**: сверься до старта реализации
+3. **Отслеживай прогресс**: отмечай пункты по ходу
+4. **Объясняй изменения**: краткое резюме на каждом шаге
+5. **Документируй результаты**: добавляй секцию ревью в `tasks/todo.md`
+6. **Фиксируй уроки**: обновляй `tasks/lessons.md` после правок
 
-The entire application runs as **three concurrent asyncio tasks** inside a single Python process (`bot/main.py`):
+---
 
-| Task | Description |
-|---|---|
-| `run_bot()` | aiogram long-polling Telegram bot |
-| `run_api()` | uvicorn/FastAPI serving the Mini App HTML + REST API |
-| `run_cron()` | Periodic tasks: oracle checks every 5 min, news scan every 30 min |
+## Базовые принципы
 
-### Database
+- **Простота в приоритете**: делай каждое изменение максимально простым. Минимальное воздействие на код.
+- **Без лени**: ищи корневые причины. Без временных фиксов. Стандарты senior-разработчика.
+- **Минимальное воздействие**: трогай только необходимое. Никаких сайд-эффектов и новых багов.
 
-SQLAlchemy 2.0 async with SQLite (aiosqlite). All models are in `db/models.py`. The engine and session factory live in `db/database.py`. Always use `AsyncSessionLocal` as an async context manager in handlers/services.
+---
 
-Key models: `User`, `Category`, `Event` (with `EventStatus` enum), `Outcome`, `Bet`, `Transaction`, `Payment`.
+## Как использовать
 
-Schema is created on startup via `Base.metadata.create_all`. There are no Alembic migrations in active use — schema changes require manual migration or a fresh DB.
+1. Скопируй этот файл как `CLAUDE.md` в корень своего проекта
+2. Создай пустые файлы `tasks/todo.md` и `tasks/lessons.md`
+3. В новой сессии Claude Code скажи: «Прочитай CLAUDE.md и следуй правилам»
+4. Дальше просто ставь задачи. Модель сама войдёт в plan mode, сделает субагентов и проверит работу перед «готово»
 
-### Telegram bot (`bot/handlers/`)
+---
 
-- `admin.py` — all admin commands (`/addevent`, `/resolve`, `/cancel_event`, `/stats`, `/updateimages`). Uses aiogram FSM (`AddEventStates`) for multi-step event creation. Admin check: `is_admin(user_id)` from `settings.admin_id_list`
-- `start.py` + `deposit.py` — user-facing handlers
-- Router priority: `admin.router` is included **before** `get_main_router()` in the dispatcher
-
-### FastAPI Mini App (`bot/api.py`)
-
-- Auth: every API request must carry `X-Init-Data` header (Telegram WebApp `initData`, verified by HMAC-SHA256 in `validate_init_data()`)
-- Static files mounted at `/miniapp` — serves `miniapp/index.html`, `miniapp/app.js`, `miniapp/styles.css`, `miniapp/images/*.svg`
-- Key endpoints: `GET /api/events`, `GET /api/events/{id}`, `POST /api/bet/quote`, `POST /api/bet/place`, `GET /api/me`, `GET /api/categories`, `GET /api/my/bets`
-
-### LMSR market engine (`bot/services/market_engine.py`)
-
-All pricing is **Logarithmic Market Scoring Rule**. The platform seeds each market with `liquidity_b = 1000`. Key functions: `get_prices(q, b)` → probabilities, `get_odds(q, b)` → display odds, `calculate_bet_cost()` → exact cost of a purchase, `calculate_shares_for_amount()` → binary search for inverse. Each winning share pays out exactly **1 RUB** at resolution; platform takes `fee_percent` (default 2%) from profit only.
-
-### Image selection (`bot/services/event_images.py`)
-
-`pick_event_image(title, category_slug, prefilled, slug)` — priority chain:
-1. `prefilled` URL from RSS news photo
-2. Wikipedia via `SLUG_WIKI_MAP` (exact article for seed events)
-3. Wikipedia opensearch on cleaned title (strips Russian question phrases)
-4. Fallback: `/miniapp/images/{category}.svg`
-
-### News / auto-events (`bot/services/news_service.py`)
-
-RSS feeds (ТАСС, Lenta, РБК, Чемпионат) are polled every 30 min. Matching articles are sent to admins with an inline "➕ Создать событие" button. Clicking it pre-fills the FSM with the article title and image. **News items are cached in memory** (`_recent_items`, `_sent_hashes`) — cache is lost on restart.
-
-### Payment flow
-
-YooKassa (cards/SBP) via `bot/services/payment_service.py`; USDT/TON via `bot/handlers/webhooks.py`. Webhooks hit `/webhooks/yookassa` and `/webhooks/ton`.
-
-## Key conventions
-
-- Money is always `Decimal`, never `float`
-- All DB sessions are async; use `async with AsyncSessionLocal() as session:` — never share sessions across tasks
-- `bot/notifier.py` holds a module-level bot instance (`notifier._bot`) used by services to send Telegram messages without importing the bot directly into service layer
-- `EventStatus.DRAFT` exists in the model but new events created via `/addevent` are immediately `ACTIVE` — DRAFT is unused
-- The `master` branch is what Amvera deploys; `main` branch is kept in sync on GitHub
+CLAUDE.md v1.0 — обновления и новые пресеты: https://t.me/buhaistrikalo

@@ -130,6 +130,67 @@ docker compose logs -f app
 - [ ] Сделан backup стратегии для PostgreSQL
 - [ ] Настроен мониторинг (UptimeRobot для бесплатного uptime-чека)
 
+---
+
+## PostgreSQL Setup
+
+### Создание базы данных
+
+```bash
+# Подключись к PostgreSQL
+psql -U postgres
+
+# Создай роль и базу
+CREATE ROLE predictbet WITH LOGIN PASSWORD 'yourpassword';
+CREATE DATABASE predictbet OWNER predictbet;
+\q
+```
+
+В `.env`:
+```
+DATABASE_URL=postgresql+asyncpg://predictbet:yourpassword@localhost:5432/predictbet
+```
+
+### Применение миграций
+
+```bash
+# Единственная команда — применяет все 6 миграций последовательно
+alembic upgrade head
+```
+
+При запуске через `python -m bot.main` PostgreSQL-ветка автоматически
+вызывает `alembic upgrade head` через Python API.
+
+### Локально с Docker
+
+```bash
+docker compose up -d postgres
+# Подождать healthcheck (5–10 сек), затем:
+alembic upgrade head
+python -m bot.seed
+python -m bot.main
+```
+
+### Откат миграции
+
+```bash
+alembic downgrade -1     # откатить последнюю
+alembic downgrade base   # откатить все
+```
+
+### Загрузить cloudflared для локального туннеля
+
+```bash
+# Linux/Mac
+wget https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64
+chmod +x cloudflared-linux-amd64 && mv cloudflared-linux-amd64 cloudflared
+
+# Windows — скачать вручную:
+# https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe
+```
+
+---
+
 ## Команды бота, которые стоит зарегистрировать в BotFather
 
 `/setcommands` → выбрать бота → отправить:

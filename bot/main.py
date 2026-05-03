@@ -209,14 +209,19 @@ async def _run_news_scan() -> None:
             return
 
         # ── 1. Авто-создание событий из релевантных новостей ──────────────
-        auto_created = await process_auto_events(suggestions)
+        auto_created, auto_hashes = await process_auto_events(suggestions)
         if auto_created:
             logger.info(f"Auto-events created: {auto_created}")
 
-        # ── 2. Остальные новости — отправляем админу для ручного решения ──
+        # ── 2. Новости без авто-публикации и с готовым вопросом — отправляем админу ──
         if bot and settings.admin_id_list:
             from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+            from bot.services.auto_events_service import _template_question
             for item in suggestions:
+                if item["hash"] in auto_hashes:
+                    continue
+                if not _template_question(item["title"], item.get("category", "politics")):
+                    continue
                 caption = (
                     f"<b>📰 {item['source']}</b>\n\n"
                     f"<b>{item['title']}</b>\n\n"

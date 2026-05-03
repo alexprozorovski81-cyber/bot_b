@@ -124,7 +124,7 @@ async def test_full_bet_flow():
         print(f"    Потенциал: {quote['potential_payout']} ₽")
 
         # Размещение ставки
-        bet = await place_bet(session, user, event.id, outcomes[0].id, Decimal("100"))
+        bet = await place_bet(session, user.id, event.id, outcomes[0].id, Decimal("100"))
         await session.refresh(user)
         print(f"✓ Ставка размещена! Bet ID = {bet.id}")
         print(f"    Новый баланс: {user.balance_rub} ₽")

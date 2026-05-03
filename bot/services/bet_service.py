@@ -5,6 +5,7 @@
 import asyncio
 import logging
 from decimal import Decimal
+from weakref import WeakValueDictionary
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -12,14 +13,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from bot.services import market_engine
 from db.database import is_sqlite, is_postgres
 from db.models import (
-    Bet, Event, EventStatus, Outcome,
+    Bet, Event, EventStatus, EventType, Outcome,
     Transaction, TransactionType, User,
 )
 
 logger = logging.getLogger(__name__)
 
 # Per-event asyncio locks для SQLite (нет SELECT FOR UPDATE)
-_event_locks: dict[int, asyncio.Lock] = {}
+_event_locks: WeakValueDictionary[int, asyncio.Lock] = WeakValueDictionary()
 
 
 class BetError(Exception):
@@ -96,6 +97,84 @@ async def quote_bet(
     }
 
 
+async def _place_bet_fixed_inner(
+    session: AsyncSession,
+    user: User,
+    event: Event,
+    outcome_id: int,
+    amount_rub: Decimal,
+) -> Bet:
+    """Ставка для FIXED_ODDS событий — без LMSR, фиксированный коэффициент."""
+    from datetime import datetime, timezone
+
+    now = datetime.now(timezone.utc)
+    closes_at = event.closes_at
+    if closes_at.tzinfo is None:
+        closes_at = closes_at.replace(tzinfo=timezone.utc)
+    if closes_at <= now:
+        raise BetError("Приём ставок на это событие завершён")
+
+    outcome_r = await session.execute(
+        select(Outcome).where(Outcome.id == outcome_id, Outcome.event_id == event.id)
+    )
+    outcome = outcome_r.scalar_one_or_none()
+    if not outcome:
+        raise BetError("Исход не найден")
+
+    # Определяем фиксированный коэффициент из события
+    odds_yes = event.odds_yes or Decimal("1.85")
+    odds_no = event.odds_no or Decimal("1.95")
+    fixed_odds = odds_yes if outcome.title == "Да" else odds_no
+
+    # Проверяем: нет ставки на ДРУГОЙ исход
+    existing_r = await session.execute(
+        select(Bet).where(
+            Bet.user_id == user.id,
+            Bet.event_id == event.id,
+            Bet.is_settled == False,  # noqa: E712
+        )
+    )
+    existing_bet = existing_r.scalar_one_or_none()
+    if existing_bet and existing_bet.outcome_id != outcome_id:
+        raise BetError("Вы уже поставили на другой исход этого события")
+
+    await session.refresh(user)
+    if user.balance_rub < amount_rub:
+        raise BetError(f"Недостаточно средств. На балансе: {user.balance_rub:.2f} монет")
+
+    balance_before = user.balance_rub
+    user.balance_rub -= amount_rub
+    balance_after = user.balance_rub
+
+    bet = Bet(
+        user_id=user.id,
+        event_id=event.id,
+        outcome_id=outcome_id,
+        amount_rub=amount_rub,
+        shares=Decimal("0"),
+        avg_odds=fixed_odds,
+    )
+    session.add(bet)
+    await session.flush()
+
+    session.add(Transaction(
+        user_id=user.id,
+        type=TransactionType.BET_PLACE,
+        amount_rub=-amount_rub,
+        balance_before=balance_before,
+        balance_after=balance_after,
+        bet_id=bet.id,
+        description=f"Ставка (фикс.) на «{outcome.title}» — {event.title[:80]}",
+    ))
+
+    await session.commit()
+    logger.info(
+        "FIXED_ODDS BET: user=%s event=%s outcome=%s amount=%s odds=%s",
+        user.id, event.id, outcome_id, amount_rub, fixed_odds,
+    )
+    return bet
+
+
 async def _place_bet_inner(
     session: AsyncSession,
     user: User,
@@ -104,6 +183,16 @@ async def _place_bet_inner(
     amount_rub: Decimal,
 ) -> Bet:
     """Внутренняя логика ставки — вызывается уже под блокировкой события."""
+    # Проверяем тип события до LMSR-расчётов
+    event_r = await session.execute(select(Event).where(Event.id == event_id))
+    event = event_r.scalar_one_or_none()
+    if not event:
+        raise BetError("Событие не найдено")
+
+    if event.event_type == EventType.FIXED_ODDS:
+        return await _place_bet_fixed_inner(session, user, event, outcome_id, amount_rub)
+
+    # LMSR (MARKET) path — без изменений
     # Перечитываем свежие данные после захвата лока
     quote = await quote_bet(session, event_id, outcome_id, amount_rub)
     event = quote["event"]
@@ -239,10 +328,12 @@ async def place_bet(
             raise BetError("Событие не найдено")
         bet = await _place_bet_inner(session, user, event_id, outcome_id, amount_rub)
     else:
-        # SQLite: asyncio.Lock per event_id
-        if event_id not in _event_locks:
-            _event_locks[event_id] = asyncio.Lock()
-        async with _event_locks[event_id]:
+        # SQLite: asyncio.Lock per event_id (strong local ref prevents GC mid-use)
+        lock = _event_locks.get(event_id)
+        if lock is None:
+            lock = asyncio.Lock()
+            _event_locks[event_id] = lock
+        async with lock:
             bet = await _place_bet_inner(session, user, event_id, outcome_id, amount_rub)
 
     await session.refresh(bet)
@@ -254,3 +345,77 @@ async def place_bet(
         pass
 
     return bet
+
+
+async def sell_bet(
+    session: AsyncSession,
+    user_id: int,
+    bet_id: int,
+) -> Decimal:
+    """
+    Продаёт ставку обратно до закрытия события.
+
+    FIXED_ODDS  → возврат 75% ставки.
+    MARKET      → рыночная цена через LMSR calculate_sell_return.
+
+    Возвращает сумму возврата.
+    """
+    bet_r = await session.execute(
+        select(Bet).where(Bet.id == bet_id, Bet.user_id == user_id)
+    )
+    bet = bet_r.scalar_one_or_none()
+    if not bet:
+        raise BetError("Ставка не найдена")
+    if bet.is_settled:
+        raise BetError("Ставка уже завершена")
+
+    event_r = await session.execute(select(Event).where(Event.id == bet.event_id))
+    event = event_r.scalar_one_or_none()
+    if not event:
+        raise BetError("Событие не найдено")
+
+    if event.status not in (EventStatus.ACTIVE,):
+        raise BetError("Продажа доступна только для активных событий")
+
+    user_r = await session.execute(select(User).where(User.id == user_id))
+    user = user_r.scalar_one()
+
+    if event.event_type == EventType.FIXED_ODDS:
+        refund = (bet.amount_rub * Decimal("0.75")).quantize(Decimal("0.01"))
+    else:
+        # LMSR: рыночная цена на текущий момент
+        outcomes_r = await session.execute(
+            select(Outcome).where(Outcome.event_id == event.id)
+        )
+        outcomes = list(outcomes_r.scalars().all())
+        q = [o.shares_outstanding for o in outcomes]
+        outcome_index = next(
+            (i for i, o in enumerate(outcomes) if o.id == bet.outcome_id), 0
+        )
+        refund = market_engine.calculate_sell_return(
+            q, event.liquidity_b, outcome_index, bet.shares
+        )
+        # Уменьшаем shares_outstanding
+        outcomes[outcome_index].shares_outstanding = max(
+            Decimal("0"), outcomes[outcome_index].shares_outstanding - bet.shares
+        )
+
+    balance_before = user.balance_rub
+    user.balance_rub += refund
+
+    bet.is_settled = True
+    bet.payout_rub = refund
+
+    session.add(Transaction(
+        user_id=user_id,
+        type=TransactionType.BET_REFUND,
+        amount_rub=refund,
+        balance_before=balance_before,
+        balance_after=user.balance_rub,
+        bet_id=bet.id,
+        description=f"Продажа ставки на «{event.title[:60]}»",
+    ))
+
+    await session.commit()
+    logger.info("Bet %s sold by user %s, refund=%s", bet_id, user_id, refund)
+    return refund
