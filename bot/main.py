@@ -364,6 +364,32 @@ async def init_database() -> None:
                     UNIQUE(user_id, period)
                 )""",
                 "CREATE INDEX IF NOT EXISTS ix_user_stats_user_id ON user_stats (user_id)",
+                # 0008: FIXED_ODDS event type, express tables
+                "ALTER TABLE events ADD COLUMN event_type VARCHAR(16) NOT NULL DEFAULT 'market'",
+                "ALTER TABLE events ADD COLUMN odds_yes NUMERIC(6,2)",
+                "ALTER TABLE events ADD COLUMN odds_no NUMERIC(6,2)",
+                """CREATE TABLE IF NOT EXISTS expresses (
+                    id INTEGER PRIMARY KEY,
+                    user_id INTEGER NOT NULL REFERENCES users(id),
+                    stake NUMERIC(18,2) NOT NULL,
+                    total_odds NUMERIC(10,4) NOT NULL,
+                    potential_payout NUMERIC(18,2) NOT NULL,
+                    status VARCHAR(16) NOT NULL DEFAULT 'active',
+                    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    settled_at DATETIME
+                )""",
+                "CREATE INDEX IF NOT EXISTS ix_expresses_user_id ON expresses (user_id)",
+                "CREATE INDEX IF NOT EXISTS ix_expresses_status ON expresses (status)",
+                """CREATE TABLE IF NOT EXISTS express_legs (
+                    id INTEGER PRIMARY KEY,
+                    express_id INTEGER NOT NULL REFERENCES expresses(id),
+                    event_id INTEGER NOT NULL REFERENCES events(id),
+                    outcome_id INTEGER NOT NULL REFERENCES outcomes(id),
+                    odds NUMERIC(6,2) NOT NULL,
+                    result VARCHAR(16) NOT NULL DEFAULT 'pending'
+                )""",
+                "CREATE INDEX IF NOT EXISTS ix_express_legs_express_id ON express_legs (express_id)",
+                "CREATE INDEX IF NOT EXISTS ix_express_legs_event_id ON express_legs (event_id)",
             ]
             for sql in migrations:
                 try:
