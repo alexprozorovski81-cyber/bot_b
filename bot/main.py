@@ -394,8 +394,10 @@ async def init_database() -> None:
             for sql in migrations:
                 try:
                     await conn.execute(text(sql))
-                except Exception:
-                    pass  # Колонка/таблица уже существует — ок
+                except Exception as _mig_err:
+                    _short = str(_mig_err)[:120]
+                    if "duplicate column" not in _short and "already exists" not in _short:
+                        logger.debug("Migration skipped (%s): %.80s", _short, sql)
 
     elif is_postgres():
         # PostgreSQL: применяем alembic-миграции
